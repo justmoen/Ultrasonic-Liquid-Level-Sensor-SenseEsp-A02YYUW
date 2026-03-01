@@ -1,7 +1,7 @@
 /*
-Project: DS1603L Sensor Data Collection
+Project: A02YYUW Sensor Data Collection
 
-This Arduino project is designed to collect data from a DS1603L sensor. The DS1603L is a 
+This Arduino project is designed to collect data from a A02YYUW sensor. The A02YYUW is a 
 high-precision, low-power consumption ultrasonic sensor. The sensor is attached to the underside
 of the tank to be measured. Refer to online documentation on the sensor to understand its limitations.
 
@@ -16,8 +16,8 @@ the sensor's RX and TX pins, respectively. These pins are used for the serial da
 The `sensorSerial` object is an instance of the SoftwareSerial class. It's initialized 
 with the `rxPin` and `txPin` as arguments, which sets up a two-way serial communication on those pins.
 
-The `sensor` object is an instance of the DS1603L class. It's initialized with a pointer 
-to the `sensorSerial` object, which tells the DS1603L library to use that serial connection 
+The `sensor` object is an instance of the A02YYUW class. It's initialized with a pointer 
+to the `sensorSerial` object, which tells the A02YYUW library to use that serial connection 
 to communicate with the sensor.
 
 The main loop of the program reads data from the sensor and processes it every two seconds. Given
@@ -39,12 +39,12 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     #include "sensesp/signalk/signalk_output.h"
 
 // Sensor-specific #includes:
-    #include <DS1603L.h>
+    #include <UltrasonicA02YYUW.h>
     #include <Stream.h>
 
 // For RepeatSensor:
     #include "sensesp/sensors/sensor.h"
-    #include <SoftwareSerial.h>
+    #include <HardwareSerial.h>
     #include "sensesp/transforms/moving_average.h"
     #include "sensesp/transforms/linear.h"
     #include "sensesp/transforms/integrator.h"
@@ -63,19 +63,19 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     const byte rxPin = 16;                               
 
 // Pass the sensor object to the sensor constructor.
-    SoftwareSerial sensorSerial(rxPin, txPin);
+    HardwareSerial sensorSerial(1);
 
 // Create an instance of the sensor using the SoftwareSerial object.
-    DS1603L sensor(&sensorSerial);
+    UltrasonicA02YYUW sensor(sensorSerial, rxPin, txPin);
 
 // Define the function that will be called every time we want
 // an updated level from the sensor. The sensor reads in mm.
-    float read_level_callback () { return sensor.readSensor(); }
+    float read_level_callback () { sensor.update(); return sensor.getDistance(); }
 
 // This function determines the status of the sensor and reports back. It will return 
 // 1 if the sensor is getting a reading and 0 if it is not. 
-// Refer to DS1603L documentation for more information on the sensor status values, timeouts etc.
-    float read_sensor_status () { return sensor.getStatus(); }
+// Refer to A02YYUW documentation for more information on the sensor status values, timeouts etc.
+    int read_sensor_status () { return sensor.getDistance() > 0 ? 1 : 0; }
 
 // The setup function performs one-time application initialization.
     void setup() {
@@ -147,7 +147,7 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
           const char* tank_config_path = "/tanks_fuel_currentLevel/tankHeight";
                  
           const float empty_value = 0; // in mm 
-          const float full_value = 1000; // in mm  
+          const float full_value = 400; // in mm  
           const float range = full_value - empty_value; // 200 - 0 = 200
           const float divisor = range / 100.0; //200 / 100 = 2
           const float multiplier = 1.0 / divisor; //  (1 / 2 = 0.5)
