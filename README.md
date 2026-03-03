@@ -1,4 +1,4 @@
-I was most interested in a solution that would send data on my water and fuel tanks to SignalK as a percentage of overall volume. This is acheived by attaching a A02YYUW to the underside of the tank to be measured, connecting that to an ESP-32, which connects through the boats wi-fi, to my SignalK server.
+I was most interested in a solution that would send data on my water and fuel tanks to SignalK as a percentage of overall volume. This is acheived by attaching a A02YYUW to the top side of the tank, through a hole, connecting that to an ESP-32, which connects through the boats wi-fi, to my SignalK server.
 
 Install the code on a esp32 wroom from AZ-Delivery using Visual Code. Before uploading the code go to line 148 and change the tank height to the height of your own tank.
 
