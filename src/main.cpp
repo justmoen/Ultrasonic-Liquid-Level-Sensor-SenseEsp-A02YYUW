@@ -52,10 +52,6 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 // Internal SensESP code is wrapped in a sensesp namespace
     using namespace sensesp;
 
-// SensESP builds upon the ReactESP framework. Every ReactESP application
-// must instantiate the "app" object.
-    reactesp::ReactESP app;
-
 // tx of the Arduino to rx of the sensor - adjust to your own board.
     const byte txPin = 17;      
 
@@ -63,14 +59,14 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     const byte rxPin = 16;                               
 
 // Pass the sensor object to the sensor constructor.
-    HardwareSerial sensorSerial(1);
+    HardwareSerial sensorSerial(2);
 
 // Create an instance of the sensor using the SoftwareSerial object.
     UltrasonicA02YYUW sensor(sensorSerial, rxPin, txPin);
 
 // Define the function that will be called every time we want
 // an updated level from the sensor. The sensor reads in mm.
-    float read_level_callback () { sensor.update(); return sensor.getDistance(); }
+    float read_level_callback () { sensor.update(); Serial.println(sensor.getDistance()); return sensor.getDistance(); }
 
 // This function determines the status of the sensor and reports back. It will return 
 // 1 if the sensor is getting a reading and 0 if it is not. 
@@ -80,14 +76,9 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 // The setup function performs one-time application initialization.
     void setup() {
 
-      // Initialise debug information to send to a serial monitor.
-            #ifndef SERIAL_DEBUG_DISABLED
-              SetupSerialDebug(115200);
-            #endif
-
             Serial.begin(115200);                             // Here the sensor output is printed.
-            delay(1000);                                      // Wait for the sensor to start up.
-            sensorSerial.begin(9600);                         // Sensor transmits its data at 9600 bps.
+            delay(1000);   
+            sensorSerial.begin(9600, SERIAL_8N1, rxPin, txPin);                         // Sensor transmits its data at 9600 bps.
             sensor.begin();                                   // Initialise the sensor library.
             Serial.println(F("Setup done."));                 // Print a message to the serial monitor.
 
@@ -105,7 +96,7 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
                               ->enable_uptime_sensor()
                               ->get_app();
         
-        // Read the sensor every 2 seconds
+        // Read the sensor every 10 seconds
           unsigned int read_interval = 2000;
         
         // Create a RepeatSensor with float output that reads the fluid level
@@ -146,12 +137,12 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
           
           const char* tank_config_path = "/tanks_fuel_currentLevel/tankHeight";
                  
-          const float empty_value = 0; // in mm 
-          const float full_value = 400; // in mm  
-          const float range = full_value - empty_value; // 200 - 0 = 200
-          const float divisor = range / 100.0; //200 / 100 = 2
-          const float multiplier = 1.0 / divisor; //  (1 / 2 = 0.5)
-          const float offset = 100.0 - full_value * multiplier; // (100 - (200 x 0.5) = 0)
+          const float empty_value = 40; // in cm 
+          const float full_value = 0; // in cm  
+          const float range = full_value - empty_value; // 0 - 40 = -40
+          const float divisor = range / 100.0; // -40 / 100 = -0.4
+          const float multiplier = 1.0 / divisor; //  (1 / -0.4 = -2.5)
+          const float offset = 100.0 - full_value * multiplier; // (100 - (0 x -2.5) = 100)
 
       // Set the configuration paths for the Linear and MovingAverage transforms
       // that will be used to process the sensor data. This makes these values available
@@ -175,5 +166,5 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
 // Loop simply calls `app.tick()` which will then execute all reactions as needed.
     void loop() {
-      app.tick();
+      sensesp::SensESPBaseApp::get_event_loop()->tick();
     }
