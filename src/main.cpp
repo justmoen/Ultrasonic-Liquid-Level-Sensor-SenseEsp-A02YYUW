@@ -56,13 +56,13 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     using namespace sensesp;
 
 // tx of the Arduino to rx of the sensor - adjust to your own board.
-    const byte txPin = 17;      
+    const byte txPin = 26;      
 
 // rx of the Arduino to tx of the sensor - adjust to your own board.
-    const byte rxPin = 16;                               
+    const byte rxPin = 27;                               
 
 // Pass the sensor object to the sensor constructor.
-    HardwareSerial sensorSerial(2);
+    HardwareSerial sensorSerial(1);
 
 // Create an instance of the sensor using the SoftwareSerial object.
     UltrasonicA02YYUW sensor(sensorSerial, rxPin, txPin);
@@ -81,7 +81,9 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
 // The setup function performs one-time application initialization.
     void setup() {
-            Serial.begin(9600);                             // Here the sensor output is printed.
+        pinMode(rxPin, INPUT);
+        pinMode(txPin, OUTPUT);
+        Serial.begin(115200);
             delay(1000);   
             sensorSerial.begin(9600, SERIAL_8N1, rxPin, txPin);                         // Sensor transmits its data at 9600 bps.
             sensor.begin();                                   // Initialise the sensor library.

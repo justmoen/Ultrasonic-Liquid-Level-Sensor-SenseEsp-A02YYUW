@@ -1,7 +1,7 @@
 #include "mppt_rs485.h"
 
-#define RS485_RX 3
-#define RS485_TX 1
+#define RS485_RX 16
+#define RS485_TX 17
 #define MPPT_BAUD 9600
 
 MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
@@ -26,16 +26,20 @@ MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
   alarm_fan = new StringProducer();
   alarm_overtemp = new StringProducer();
 
-  serial_ = &Serial;
+  serial_ = &Serial2;
 }
 
 void MPPT_RS485::begin() {
-  serial_->begin(MPPT_BAUD);
+  serial_->begin(MPPT_BAUD, SERIAL_8N1, RS485_RX, RS485_TX);
+  last_poll_ = millis() + 5000;  // delay first poll only
 }
 
 void MPPT_RS485::loop() {
-  if (millis() - last_poll_ >= poll_interval_) {
-    last_poll_ = millis();
+  static uint32_t last = 0;
+
+  if (millis() - last >= poll_interval_) {
+    last = millis();
+    Serial.println("Polling MPPT...");
     poll();
   }
 }
@@ -62,6 +66,12 @@ void MPPT_RS485::send_command() {
 bool MPPT_RS485::read_response(uint8_t* buffer, size_t len) {
   uint32_t start = millis();
   size_t index = 0;
+
+  if (serial_->available()) {
+  uint8_t b = serial_->read();
+  Serial.printf("%02X ", b);
+  buffer[index++] = b;
+}
 
   while (millis() - start < 1000) {  // was 500
     if (serial_->available()) {
@@ -104,6 +114,11 @@ void MPPT_RS485::poll() {
   fan_fault->emit(fan_fault_bit);
   over_temperature->emit(overtemp_bit);
   charge_short_circuit->emit(charge_short_bit);
+
+  alarm_operating->emit(operating_fault_bit ? "Operating fault" : "normal");
+  alarm_battery->emit(battery_overdischarge_bit ? "Battery overdischarge" : "normal");
+  alarm_fan->emit(fan_fault_bit ? "Fan fault" : "normal");
+  alarm_overtemp->emit(overtemp_bit ? "Over temperature" : "Normal");
 
   uint16_t pv_raw = (response[6] << 8) | response[7];
   uint16_t batt_raw = (response[8] << 8) | response[9];
