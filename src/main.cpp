@@ -83,11 +83,7 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     void setup() {
 
             Serial.begin(115200);                             // Here the sensor output is printed.
-<<<<<<< HEAD
-            delay(1000);                                      // Wait for the sensor to start up.
-=======
             delay(1000);   
->>>>>>> 2079a01aa5cde35e67bc82d9fe08507703871883
             sensorSerial.begin(9600, SERIAL_8N1, rxPin, txPin);                         // Sensor transmits its data at 9600 bps.
             sensor.begin();                                   // Initialise the sensor library.
             Serial.println(F("Setup done."));                 // Print a message to the serial monitor.
@@ -107,11 +103,7 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
                               ->get_app();
         
         // Read the sensor every 10 seconds
-<<<<<<< HEAD
           unsigned int read_interval = 10000;
-=======
-          unsigned int read_interval = 2000;
->>>>>>> 2079a01aa5cde35e67bc82d9fe08507703871883
         
         // Create a RepeatSensor with float output that reads the fluid level
         // using the read_level_callback function defined above.
@@ -150,14 +142,8 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
       // https://signalk.org/SensESP/pages/tutorials/tank_level/#example-3-a-sensor-that-outputs-something-other-than-0-when-the-tank-is-empty  
           
           const char* tank_config_path = "/tanks_fuel_currentLevel/tankHeight";
-                 
-<<<<<<< HEAD
-          const float empty_value = 40; // in mm 
-          const float full_value = 0; // in mm  
-=======
           const float empty_value = 40; // in cm 
           const float full_value = 0; // in cm  
->>>>>>> 2079a01aa5cde35e67bc82d9fe08507703871883
           const float range = full_value - empty_value; // 0 - 40 = -40
           const float divisor = range / 100.0; // -40 / 100 = -0.4
           const float multiplier = 1.0 / divisor; //  (1 / -0.4 = -2.5)
@@ -216,10 +202,6 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
 // Loop simply calls `app.tick()` which will then execute all reactions as needed.
     void loop() {
-<<<<<<< HEAD
         sensesp::SensESPBaseApp::get_event_loop()->tick();
         mppt->loop();
-=======
-      sensesp::SensESPBaseApp::get_event_loop()->tick();
->>>>>>> 2079a01aa5cde35e67bc82d9fe08507703871883
     }
