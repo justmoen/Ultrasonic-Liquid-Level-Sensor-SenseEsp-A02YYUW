@@ -49,12 +49,11 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     #include "sensesp/transforms/linear.h"
     #include "sensesp/transforms/integrator.h"
 
+    #include <sensesp.h>
+    #include "mppt_rs485.h"
+
 // Internal SensESP code is wrapped in a sensesp namespace
     using namespace sensesp;
-
-// SensESP builds upon the ReactESP framework. Every ReactESP application
-// must instantiate the "app" object.
-    reactesp::ReactESP app;
 
 // tx of the Arduino to rx of the sensor - adjust to your own board.
     const byte txPin = 17;      
@@ -63,10 +62,13 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
     const byte rxPin = 16;                               
 
 // Pass the sensor object to the sensor constructor.
-    HardwareSerial sensorSerial(1);
+    HardwareSerial sensorSerial(2);
 
 // Create an instance of the sensor using the SoftwareSerial object.
     UltrasonicA02YYUW sensor(sensorSerial, rxPin, txPin);
+
+    #define MPPT_ADDRESS 0x01
+    MPPT_RS485* mppt;
 
 // Define the function that will be called every time we want
 // an updated level from the sensor. The sensor reads in mm.
@@ -80,14 +82,9 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 // The setup function performs one-time application initialization.
     void setup() {
 
-      // Initialise debug information to send to a serial monitor.
-            #ifndef SERIAL_DEBUG_DISABLED
-              SetupSerialDebug(115200);
-            #endif
-
             Serial.begin(115200);                             // Here the sensor output is printed.
             delay(1000);                                      // Wait for the sensor to start up.
-            sensorSerial.begin(9600);                         // Sensor transmits its data at 9600 bps.
+            sensorSerial.begin(9600, SERIAL_8N1, rxPin, txPin);                         // Sensor transmits its data at 9600 bps.
             sensor.begin();                                   // Initialise the sensor library.
             Serial.println(F("Setup done."));                 // Print a message to the serial monitor.
 
@@ -105,8 +102,8 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
                               ->enable_uptime_sensor()
                               ->get_app();
         
-        // Read the sensor every 2 seconds
-          unsigned int read_interval = 2000;
+        // Read the sensor every 10 seconds
+          unsigned int read_interval = 10000;
         
         // Create a RepeatSensor with float output that reads the fluid level
         // using the read_level_callback function defined above.
@@ -146,12 +143,12 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
           
           const char* tank_config_path = "/tanks_fuel_currentLevel/tankHeight";
                  
-          const float empty_value = 0; // in mm 
-          const float full_value = 400; // in mm  
-          const float range = full_value - empty_value; // 200 - 0 = 200
-          const float divisor = range / 100.0; //200 / 100 = 2
-          const float multiplier = 1.0 / divisor; //  (1 / 2 = 0.5)
-          const float offset = 100.0 - full_value * multiplier; // (100 - (200 x 0.5) = 0)
+          const float empty_value = 40; // in mm 
+          const float full_value = 0; // in mm  
+          const float range = full_value - empty_value; // 0 - 40 = -40
+          const float divisor = range / 100.0; // -40 / 100 = -0.4
+          const float multiplier = 1.0 / divisor; //  (1 / -0.4 = -2.5)
+          const float offset = 100.0 - full_value * multiplier; // (100 - (0 x -2.5) = 100)
 
       // Set the configuration paths for the Linear and MovingAverage transforms
       // that will be used to process the sensor data. This makes these values available
@@ -161,13 +158,44 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
           const char *ultrasonic_ave_samples = "/tanks_fuel_currentLevel/samples";
 
       // Now, you add Linear to your main.cpp with your calculated multiplier and offset values:
-          float scale = 1.0;
+          float scale = 1;
 
       // Send the fluid level of the tank to the Signal K server as a Float
           tank_level  
                       ->connect_to(new Linear(multiplier, offset, linear_config_path))
+                      ->connect_to(new Linear(0.01, 0))
                       ->connect_to(new MovingAverage(10, scale, ultrasonic_ave_samples))
                       ->connect_to(new SKOutputFloat(sk_path));
+
+        mppt = new MPPT_RS485(MPPT_ADDRESS, 30000);  // 30 second polling
+        mppt->begin();
+
+        mppt->pv_voltage->connect_to(
+            new SKOutputFloat("electrical.charger.motorMPPT.PVVolt"));
+
+        mppt->battery_voltage->connect_to(
+            new SKOutputFloat("electrical.charger.motorMPPT.BatteryVolt"));
+
+        mppt->charge_current->connect_to(
+            new SKOutputFloat("electrical.charger.motorMPPT.ChargeCurrent"));
+
+        mppt->internal_temp1->connect_to(
+            new SKOutputFloat("electrical.charger.motorMPPT.InternalTemperature1"));
+
+        mppt->external_temp1->connect_to(
+            new SKOutputFloat("electrical.charger.motorMPPT.ExternalTemperature1"));
+
+        mppt->alarm_operating->connect_to(
+            new SKOutputString("notifications.electrical.charger.motorMPPT.operatingFault"));
+
+        mppt->alarm_battery->connect_to(
+            new SKOutputString("notifications.electrical.charger.motorMPPT.batteryOverDischarge"));
+
+        mppt->alarm_fan->connect_to(
+            new SKOutputString("notifications.electrical.charger.motorMPPT.fanFault"));
+
+        mppt->alarm_overtemp->connect_to(
+            new SKOutputString("notifications.electrical.charger.motorMPPT.overTemperature"));
 
       // Start the SensESP application running.
           sensesp_app->start();
@@ -175,5 +203,6 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
 // Loop simply calls `app.tick()` which will then execute all reactions as needed.
     void loop() {
-      app.tick();
+        sensesp::SensESPBaseApp::get_event_loop()->tick();
+        mppt->loop();
     }
