@@ -2,7 +2,6 @@
 
 #define RS485_RX 3
 #define RS485_TX 1
-#define RS485_DE 4
 #define MPPT_BAUD 9600
 
 MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
@@ -27,13 +26,11 @@ MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
   alarm_fan = new StringProducer();
   alarm_overtemp = new StringProducer();
 
-  serial_ = &Serial2;
+  serial_ = &Serial;
 }
 
 void MPPT_RS485::begin() {
-  pinMode(RS485_DE, OUTPUT);
-  digitalWrite(RS485_DE, LOW);
-  serial_->begin(MPPT_BAUD, SERIAL_8N1, RS485_RX, RS485_TX);
+  serial_->begin(MPPT_BAUD);
 }
 
 void MPPT_RS485::loop() {
@@ -45,23 +42,28 @@ void MPPT_RS485::loop() {
 
 void MPPT_RS485::send_command() {
   uint8_t frame[8] = {address_, 0xA3, 0x01, 0, 0, 0, 0, 0};
+
   uint16_t sum = 0;
   for (int i = 0; i < 7; i++) sum += frame[i];
   frame[7] = sum & 0xFF;
 
-  digitalWrite(RS485_DE, HIGH);
-  delay(2);
+  // Clear any junk
+  while (serial_->available()) serial_->read();
+
+  delay(50);  // let bus settle
+
   serial_->write(frame, 8);
   serial_->flush();
-  delay(2);
-  digitalWrite(RS485_DE, LOW);
+
+  // 🔥 CRITICAL: allow module to switch back to RX
+  delay(30);
 }
 
 bool MPPT_RS485::read_response(uint8_t* buffer, size_t len) {
   uint32_t start = millis();
   size_t index = 0;
 
-  while (millis() - start < 500) {
+  while (millis() - start < 1000) {  // was 500
     if (serial_->available()) {
       buffer[index++] = serial_->read();
       if (index >= len) return true;

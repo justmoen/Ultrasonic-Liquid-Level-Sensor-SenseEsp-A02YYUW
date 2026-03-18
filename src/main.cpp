@@ -72,7 +72,7 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
 // Define the function that will be called every time we want
 // an updated level from the sensor. The sensor reads in mm.
-    float read_level_callback () { sensor.update(); Serial.println(sensor.getDistance()); return sensor.getDistance(); }
+    float read_level_callback () { sensor.update(); return sensor.getDistance(); }
 
 // This function determines the status of the sensor and reports back. It will return 
 // 1 if the sensor is getting a reading and 0 if it is not. 
@@ -81,12 +81,11 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
 // The setup function performs one-time application initialization.
     void setup() {
-
-            Serial.begin(115200);                             // Here the sensor output is printed.
+            Serial.begin(9600);                             // Here the sensor output is printed.
             delay(1000);   
             sensorSerial.begin(9600, SERIAL_8N1, rxPin, txPin);                         // Sensor transmits its data at 9600 bps.
             sensor.begin();                                   // Initialise the sensor library.
-            Serial.println(F("Setup done."));                 // Print a message to the serial monitor.
+            // Serial.println(F("Setup done."));                 // Print a message to the serial monitor.
 
         // Create the global SensESPApp() object
             SensESPAppBuilder builder;
@@ -142,12 +141,11 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
       // https://signalk.org/SensESP/pages/tutorials/tank_level/#example-3-a-sensor-that-outputs-something-other-than-0-when-the-tank-is-empty  
           
           const char* tank_config_path = "/tanks_fuel_currentLevel/tankHeight";
-          const float empty_value = 40; // in cm 
-          const float full_value = 0; // in cm  
-          const float range = full_value - empty_value; // 0 - 40 = -40
-          const float divisor = range / 100.0; // -40 / 100 = -0.4
-          const float multiplier = 1.0 / divisor; //  (1 / -0.4 = -2.5)
-          const float offset = 100.0 - full_value * multiplier; // (100 - (0 x -2.5) = 100)
+          const float empty_value = 40.0;
+          const float full_value = 0.0;
+
+          const float multiplier = 1.0 / (full_value - empty_value);  // -0.025
+          const float offset = -empty_value * multiplier;             // 1.0
 
       // Set the configuration paths for the Linear and MovingAverage transforms
       // that will be used to process the sensor data. This makes these values available
@@ -161,10 +159,9 @@ The sensor status is also sent to the Signal K server to monitor the sensor's he
 
       // Send the fluid level of the tank to the Signal K server as a Float
           tank_level  
-                      ->connect_to(new Linear(multiplier, offset, linear_config_path))
-                      ->connect_to(new Linear(0.01, 0))
-                      ->connect_to(new MovingAverage(10, scale, ultrasonic_ave_samples))
-                      ->connect_to(new SKOutputFloat(sk_path));
+            ->connect_to(new Linear(multiplier, offset))   // IMPORTANT
+            ->connect_to(new MovingAverage(10, scale, ultrasonic_ave_samples))
+            ->connect_to(new SKOutputFloat(sk_path));
 
         mppt = new MPPT_RS485(MPPT_ADDRESS, 30000);  // 30 second polling
         mppt->begin();
