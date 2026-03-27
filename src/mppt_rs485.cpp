@@ -2,6 +2,7 @@
 
 #define RS485_RX 16
 #define RS485_TX 17
+#define RS485_DE 4
 #define MPPT_BAUD 9600
 
 MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
@@ -30,6 +31,8 @@ MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
 }
 
 void MPPT_RS485::begin() {
+  pinMode(RS485_DE, OUTPUT);
+  digitalWrite(RS485_DE, LOW);  // start in RX mode
   serial_->begin(MPPT_BAUD, SERIAL_8N1, RS485_RX, RS485_TX);
   last_poll_ = millis() + 5000;  // delay first poll only
 }
@@ -51,34 +54,48 @@ void MPPT_RS485::send_command() {
   for (int i = 0; i < 7; i++) sum += frame[i];
   frame[7] = sum & 0xFF;
 
-  // Clear any junk
-  while (serial_->available()) serial_->read();
+  // clear buffer
+  while (serial_->available()) {
+  Serial.println(serial_->read(), HEX);
+}
 
-  delay(50);  // let bus settle
+  Serial.print("TX: ");
+  for (int i = 0; i < 8; i++) Serial.printf("%02X ", frame[i]);
+  Serial.println();
+
+  // TX mode
+  digitalWrite(RS485_DE, HIGH);
+  delayMicroseconds(200);   // small settle
 
   serial_->write(frame, 8);
-  serial_->flush();
+  serial_->flush();         // wait until sent
 
-  // 🔥 CRITICAL: allow module to switch back to RX
-  delay(30);
+  // 🔥 IMMEDIATE switch to RX (critical)
+  digitalWrite(RS485_DE, LOW);
+
+  delay(10);   // allow MPPT to start replying
 }
 
 bool MPPT_RS485::read_response(uint8_t* buffer, size_t len) {
   uint32_t start = millis();
   size_t index = 0;
 
-  if (serial_->available()) {
-  uint8_t b = serial_->read();
-  Serial.printf("%02X ", b);
-  buffer[index++] = b;
-}
+  Serial.print("RX: ");
 
-  while (millis() - start < 1000) {  // was 500
+  while (millis() - start < 1500) {
     if (serial_->available()) {
-      buffer[index++] = serial_->read();
-      if (index >= len) return true;
+      uint8_t b = serial_->read();
+      Serial.printf("%02X ", b);
+
+      buffer[index++] = b;
+      if (index >= len) {
+        Serial.println();
+        return true;
+      }
     }
   }
+
+  Serial.println(" (timeout)");
   return false;
 }
 
@@ -120,11 +137,11 @@ void MPPT_RS485::poll() {
   alarm_fan->emit(fan_fault_bit ? "Fan fault" : "normal");
   alarm_overtemp->emit(overtemp_bit ? "Over temperature" : "Normal");
 
-  uint16_t pv_raw = (response[6] << 8) | response[7];
-  uint16_t batt_raw = (response[8] << 8) | response[9];
-  uint16_t curr_raw = (response[10] << 8) | response[11];
-  uint16_t int_temp_raw = (response[12] << 8) | response[13];
-  uint16_t ext_temp_raw = (response[16] << 8) | response[17];
+  uint16_t pv_raw        = (response[6]  << 8) | response[7];
+  uint16_t batt_raw      = (response[8]  << 8) | response[9];
+  uint16_t curr_raw      = (response[10] << 8) | response[11];
+  uint16_t int_temp_raw  = (response[12] << 8) | response[13];
+  uint16_t ext_temp_raw  = (response[16] << 8) | response[17];
 
   pv_voltage->emit(pv_raw / 10.0);
   battery_voltage->emit(batt_raw / 100.0);
