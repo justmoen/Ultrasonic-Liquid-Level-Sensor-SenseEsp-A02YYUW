@@ -103,32 +103,35 @@
             ->set_system_status_led(safe_led) 
             ->get_app();
 
-        ESP_LOGI("ARDUINO", "App object created successfully");    
+        ESP_LOGI("ARDUINO", "App object created successfully");
+        
 
         auto* pitch_sensor = new RepeatSensor<float>(1500, []() {
-
+            float ax_offset = 0, ay_offset = 0, az_offset = 0;
             int16_t ax, ay, az;
             if (!mpu_ok) return 0.0f;
 
             mpu.getAcceleration(&ax, &ay, &az);
 
-            float axf = ax / 16384.0;
-            float ayf = ay / 16384.0;
-            float azf = az / 16384.0;
+            float axf = (ax - ax_offset) / 16384.0;
+            float ayf = (ay - ay_offset) / 16384.0;
+            float azf = (az - az_offset) / 16384.0;
 
-            return atan2(-axf, sqrt(ayf * ayf + azf * azf));
+            float pitch = atan2(azf, axf);
+            return pitch; // atan2(-axf, sqrt(ayf * ayf + azf * azf));
         });
 
         auto* roll_sensor = new RepeatSensor<float>(1500, []() {
+            float ax_offset = 0, ay_offset = 0, az_offset = 0;
             int16_t ax, ay, az;
             if (!mpu_ok) return 0.0f;
             mpu.getAcceleration(&ax, &ay, &az);
 
-            float axf = ax / 16384.0;
-            float ayf = ay / 16384.0;
-            float azf = az / 16384.0;
+            float axf = (ax - ax_offset) / 16384.0;
+            float ayf = (ay - ay_offset) / 16384.0;
+            float azf = (az - az_offset) / 16384.0;
 
-            float roll = atan2(ayf, azf);
+            float roll = atan2(ayf, axf);
             return roll;
         });
 
@@ -270,5 +273,4 @@
         if (mppt) {
             mppt->loop();
         }
-        // sensesp::SensESPBaseApp::get_event_loop()->tick();
     }
