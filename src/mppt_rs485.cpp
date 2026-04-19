@@ -58,22 +58,30 @@ void MPPT_RS485::send_command() {
     ESP_LOGI("MAIN", "RX: %02X", serial_->read());
   }
 
-  ESP_LOGI("MAIN", "TX: ");
-  for (int i = 0; i < 8; i++) ESP_LOGI("MAIN", "%02X ", frame[i]);
+ESP_LOGI("MAIN", "TX: ");
+  for (int i = 0; i < 8; i++) {
+    ESP_LOGI("MAIN", "%02X", frame[i]);
+  }
   ESP_LOGI("MAIN", "");
 
   // TX mode
-  digitalWrite(RS485_DE, LOW);
-  delayMicroseconds(200);   // small settle
+  digitalWrite(RS485_DE, HIGH);  // Enable TX
+  delayMicroseconds(200);        // Settle
+
+  ESP_LOGI("MAIN", "DE=TX");
 
   serial_->write(frame, 8);
-  serial_->flush();         // wait until sent
+  serial_->flush();              // Wait TX complete
 
-  delay(10);   // allow MPPT to start replying
+  digitalWrite(RS485_DE, LOW);   // Back to RX
+  delayMicroseconds(200);        // Settle
+
+  ESP_LOGI("MAIN", "DE=RX");
+  delay(10);                     // Allow reply
 }
 
 bool MPPT_RS485::read_response(uint8_t* buffer, size_t len) {
-  uint32_t start = millis();
+  uint32_t start = millis();     // Fix scope
   size_t index = 0;
 
   ESP_LOGI("MAIN", "RX: ");
