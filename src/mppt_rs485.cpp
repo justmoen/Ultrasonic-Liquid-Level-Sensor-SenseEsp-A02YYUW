@@ -38,12 +38,11 @@ void MPPT_RS485::begin() {
 }
 
 void MPPT_RS485::loop() {
-  static uint32_t last = 0;
 
-  if (millis() - last >= poll_interval_) {
-    last = millis();
-    Serial.println("Polling MPPT...");
-    poll();
+  if (millis() - last_poll_ >= poll_interval_) {
+      last_poll_ = millis();
+      ESP_LOGI("MPPT", "Polling MPPT...");
+      poll();
   }
 }
 
@@ -56,22 +55,19 @@ void MPPT_RS485::send_command() {
 
   // clear buffer
   while (serial_->available()) {
-  Serial.println(serial_->read(), HEX);
-}
+    ESP_LOGI("MAIN", "RX: %02X", serial_->read());
+  }
 
-  Serial.print("TX: ");
-  for (int i = 0; i < 8; i++) Serial.printf("%02X ", frame[i]);
-  Serial.println();
+  ESP_LOGI("MAIN", "TX: ");
+  for (int i = 0; i < 8; i++) ESP_LOGI("MAIN", "%02X ", frame[i]);
+  ESP_LOGI("MAIN", "");
 
   // TX mode
-  digitalWrite(RS485_DE, HIGH);
+  digitalWrite(RS485_DE, LOW);
   delayMicroseconds(200);   // small settle
 
   serial_->write(frame, 8);
   serial_->flush();         // wait until sent
-
-  // 🔥 IMMEDIATE switch to RX (critical)
-  digitalWrite(RS485_DE, LOW);
 
   delay(10);   // allow MPPT to start replying
 }
@@ -80,22 +76,22 @@ bool MPPT_RS485::read_response(uint8_t* buffer, size_t len) {
   uint32_t start = millis();
   size_t index = 0;
 
-  Serial.print("RX: ");
+  ESP_LOGI("MAIN", "RX: ");
 
   while (millis() - start < 1500) {
     if (serial_->available()) {
       uint8_t b = serial_->read();
-      Serial.printf("%02X ", b);
+      ESP_LOGI("MAIN", "RX: %02X", b);
 
       buffer[index++] = b;
       if (index >= len) {
-        Serial.println();
+        ESP_LOGI("MAIN", "");
         return true;
       }
     }
   }
 
-  Serial.println(" (timeout)");
+  ESP_LOGI("MAIN", " (timeout)");
   return false;
 }
 
