@@ -1,7 +1,7 @@
 // ================= SENSOR ENABLE SWITCHES =================
-// #define ENABLE_MPU
-// #define ENABLE_TANK
-#define ENABLE_MPPT
+#define ENABLE_MPU
+#define ENABLE_TANK
+// #define ENABLE_MPPT
 // =========================================================
 
 
@@ -10,10 +10,11 @@
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/sensors/sensor.h"
 #include <HardwareSerial.h>
-#include "sensesp/transforms/moving_average.h"
 #include "sensesp/transforms/linear.h"
 #include "sensesp/system/system_status_led.h"
 #include <sensesp.h>
+#include <ReactESP.h>
+#include <limits>
 
 // Sensor-specific includes
 #ifdef ENABLE_TANK
@@ -32,6 +33,41 @@
 
 
 using namespace sensesp;
+
+class RollingMaxReporter : public Transform<float, float> {
+ public:
+  explicit RollingMaxReporter(uint32_t report_interval_ms)
+      : Transform<float, float>(""), report_interval_ms_(report_interval_ms) {
+    reset_();
+    event_loop()->onRepeat(report_interval_ms_, [this]() {
+      if (has_sample_) {
+        this->emit(max_);
+      }
+      reset_();
+    });
+  }
+
+  void set(const float& new_value) override {
+    if (!has_sample_) {
+      has_sample_ = true;
+      max_ = new_value;
+      return;
+    }
+    if (new_value > max_) {
+      max_ = new_value;
+    }
+  }
+
+ private:
+  void reset_() {
+    has_sample_ = false;
+    max_ = -std::numeric_limits<float>::infinity();
+  }
+
+  const uint32_t report_interval_ms_;
+  bool has_sample_ = false;
+  float max_ = -std::numeric_limits<float>::infinity();
+};
 
 
 // ================= MPU =================
@@ -113,8 +149,15 @@ void setup() {
     auto builder = new SensESPAppBuilder();
     auto safe_led = std::make_shared<SystemStatusLed>(0);
 
+    const char* hostname =
+#ifdef ENABLE_MPPT
+        "SensESP_MPPT";
+#else
+        "SensESP_MidShip";
+#endif
+
     sensesp_app = builder
-        ->set_hostname("SensESP")
+        ->set_hostname(hostname)
         ->set_system_status_led(safe_led) 
         ->get_app();
 
@@ -123,7 +166,7 @@ void setup() {
 
     // ================= MPU =================
 #ifdef ENABLE_MPU
-    auto* pitch_sensor = new RepeatSensor<float>(1500, []() -> float {
+    auto* pitch_sensor = new RepeatSensor<float>(1000, []() -> float {
         int16_t ax, ay, az;
         if (!mpu_ok) return 0.0f;
 
@@ -136,7 +179,7 @@ void setup() {
         return atan2(azf, axf);
     });
 
-    auto* roll_sensor = new RepeatSensor<float>(1500, []() -> float {
+    auto* roll_sensor = new RepeatSensor<float>(1000, []() -> float {
         int16_t ax, ay, az;
         if (!mpu_ok) return 0.0f;
 
@@ -149,23 +192,26 @@ void setup() {
         return atan2(ayf, axf);
     });
 
-    pitch_sensor->connect_to(
-        new SKOutputFloat("navigation.attitude.pitch"));
+    pitch_sensor
+        ->connect_to(new RollingMaxReporter(10000))
+        ->connect_to(new SKOutputFloat("navigation.attitude.pitch"));
 
-    roll_sensor->connect_to(
-        new SKOutputFloat("navigation.attitude.roll"));
+    roll_sensor
+        ->connect_to(new RollingMaxReporter(10000))
+        ->connect_to(new SKOutputFloat("navigation.attitude.roll"));
 #endif
 
 
     // ================= TANK =================
 #ifdef ENABLE_TANK
-    unsigned int read_interval = 10000;
+    constexpr uint32_t sample_interval_ms = 1000;
+    constexpr uint32_t report_interval_ms = 10000;
 
     auto* tank_level =
-        new RepeatSensor<float>(read_interval, read_level_callback);
+        new RepeatSensor<float>(sample_interval_ms, read_level_callback);
 
     auto* sensor_status =
-        new RepeatSensor<int>(read_interval, read_sensor_status);
+        new RepeatSensor<int>(report_interval_ms, read_sensor_status);
 
     auto int_to_bool_function = [](int sensor_status) -> bool {
         return sensor_status == 1;
@@ -188,7 +234,7 @@ void setup() {
 
     tank_level  
         ->connect_to(new Linear(multiplier, offset))
-        ->connect_to(new MovingAverage(10))
+        ->connect_to(new RollingMaxReporter(report_interval_ms))
         ->connect_to(new SKOutputFloat(sk_path));
 #endif
 
