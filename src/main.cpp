@@ -416,9 +416,14 @@ void setup() {
         ->connect_to(int_to_bool_transform)
         ->connect_to(new SKOutputBool("tanks.fuel.0.sensorStatus"));
 
-    // Send tank capacity as a constant value (20 L) with units metadata
+    // Send tank capacity as a constant value (0.02) with units metadata.
+    // This value is editable from the SensESP web UI via ConfigItem below.
     auto* tank_capacity =
-        new ConstantSensor<float>(20.0f, static_cast<int>(report_interval_ms / 1000), "/Sensors/Fuel Tank Capacity");
+        new ConstantSensor<float>(0.02f, static_cast<int>(report_interval_ms / 1000), "/Sensors/Fuel Tank Capacity");
+    ConfigItem(tank_capacity)
+        ->set_title("Fuel Tank Capacity")
+        ->set_description("Fuel tank capacity value.")
+        ->set_sort_order(1000);
     tank_capacity->connect_to(new SKOutputFloat("tanks.fuel.0.capacity", "", "l"));
 
     const char* sk_path = "tanks.fuel.0.currentLevel";
