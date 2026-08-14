@@ -20,6 +20,7 @@
 #ifdef ENABLE_TANK
 #include <UltrasonicA02YYUW.h>
 #include <Stream.h>
+#include "sensesp/sensors/constant_sensor.h"
 #endif
 
 #ifdef ENABLE_MPPT
@@ -199,6 +200,10 @@ void setup() {
     roll_sensor
         ->connect_to(new RollingMaxReporter(10000))
         ->connect_to(new SKOutputFloat("navigation.attitude.roll"));
+
+    // Transmit yaw as a constant 0 for now (placeholder)
+    auto* yaw_constant = new FloatConstantSensor(0.0f, 10, "/Sensors/Yaw");
+    yaw_constant->connect_to(new SKOutputFloat("navigation.attitude.yaw"));
 #endif
 
 
@@ -222,9 +227,14 @@ void setup() {
 
     sensor_status 
         ->connect_to(int_to_bool_transform)
-        ->connect_to(new SKOutputBool("tanks.fuel.currentLevel.sensorStatus"));
+        ->connect_to(new SKOutputBool("tanks.fuel.0.sensorStatus"));
 
-    const char* sk_path = "tanks.fuel.currentLevel";
+    // Send tank capacity as a constant value (20 L) with units metadata
+    auto* tank_capacity =
+        new FloatConstantSensor(20.0f, static_cast<int>(report_interval_ms / 1000), "/Sensors/Fuel Tank Capacity");
+    tank_capacity->connect_to(new SKOutputFloat("tanks.fuel.0.capacity", "", "l"));
+
+    const char* sk_path = "tanks.fuel.0.currentLevel";
 
     const float empty_value = 40.0;
     const float full_value = 0.0;
@@ -232,8 +242,13 @@ void setup() {
     const float multiplier = 1.0 / (full_value - empty_value);
     const float offset = -empty_value * multiplier;
 
-    tank_level  
+    tank_level
         ->connect_to(new Linear(multiplier, offset))
+        ->connect_to(new LambdaTransform<float, float>([](float v) -> float {
+            if (v < 0.0f) return 0.0f;
+            if (v > 1.0f) return 1.0f;
+            return v;
+        }))
         ->connect_to(new RollingMaxReporter(report_interval_ms))
         ->connect_to(new SKOutputFloat(sk_path));
 #endif
