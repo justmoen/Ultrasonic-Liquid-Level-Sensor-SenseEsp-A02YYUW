@@ -1,9 +1,12 @@
 // ================= SENSOR ENABLE SWITCHES =================
+#if !defined(ENABLE_MPU)
 #define ENABLE_MPU
-#define ENABLE_TANK
-// #define ENABLE_MPPT
-// =========================================================
+#endif
 
+#if !defined(ENABLE_TANK) && !defined(ENABLE_MPPT)
+#define ENABLE_TANK
+#endif
+// =========================================================
 
 // Boilerplate #includes:
 #include "sensesp_app_builder.h"
@@ -14,7 +17,13 @@
 #include "sensesp/system/system_status_led.h"
 #include <sensesp.h>
 #include <ReactESP.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Update.h>
+#include <WebServer.h>
+#include <algorithm>
 #include <limits>
+#include "firmware_version.h"
 
 // Sensor-specific includes
 #ifdef ENABLE_TANK
@@ -32,6 +41,184 @@
 #include <MPU6050.h>
 #endif
 
+namespace {
+String extract_json_string(const String& json, const String& key) {
+    String needle = "\"" + key + "\"";
+    int key_pos = json.indexOf(needle);
+    if (key_pos < 0) {
+        return "";
+    }
+
+    int value_pos = json.indexOf(':', key_pos);
+    if (value_pos < 0) {
+        return "";
+    }
+
+    int start = json.indexOf('"', value_pos + 1);
+    if (start < 0) {
+        return "";
+    }
+
+    int end = json.indexOf('"', start + 1);
+    if (end < 0) {
+        return "";
+    }
+
+    return json.substring(start + 1, end);
+}
+
+String find_asset_url_for_variant(const String& json, const String& variant) {
+    int search_pos = 0;
+    while (search_pos >= 0) {
+        int pos = json.indexOf("\"browser_download_url\"", search_pos);
+        if (pos < 0) {
+            return "";
+        }
+
+        int colon_pos = json.indexOf(':', pos);
+        if (colon_pos < 0) {
+            return "";
+        }
+
+        int start = json.indexOf('"', colon_pos + 1);
+        int end = json.indexOf('"', start + 1);
+        if (start < 0 || end < 0) {
+            return "";
+        }
+
+        String candidate = json.substring(start + 1, end);
+        if (candidate.endsWith(".bin") && (variant.length() == 0 || candidate.indexOf(variant) >= 0 || candidate.indexOf("latest") >= 0)) {
+            return candidate;
+        }
+
+        search_pos = end + 1;
+    }
+
+    return "";
+}
+
+bool install_update_from_url(const String& url) {
+    WiFiClientSecure client;
+    HTTPClient http;
+
+    if (!http.begin(client, url)) {
+        return false;
+    }
+
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    int http_code = http.GET();
+    if (http_code != HTTP_CODE_OK) {
+        http.end();
+        return false;
+    }
+
+    int content_length = http.getSize();
+    if (content_length <= 0) {
+        http.end();
+        return false;
+    }
+
+    if (!Update.begin(content_length)) {
+        http.end();
+        return false;
+    }
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t total_written = 0;
+    uint8_t buffer[512];
+    while (http.connected() && total_written < static_cast<size_t>(content_length)) {
+        size_t available = stream->available();
+        if (available == 0) {
+            delay(1);
+            continue;
+        }
+
+        size_t chunk_size = std::min<size_t>(sizeof(buffer), std::max<size_t>(available, 1U));
+        int bytes_read = stream->readBytes(reinterpret_cast<char*>(buffer), chunk_size);
+        if (bytes_read <= 0) {
+            break;
+        }
+
+        if (Update.write(buffer, bytes_read) != bytes_read) {
+            break;
+        }
+
+        total_written += static_cast<size_t>(bytes_read);
+    }
+
+    bool success = total_written == static_cast<size_t>(content_length) && Update.end(true);
+    http.end();
+
+    if (success) {
+        ESP_LOGI("ARDUINO", "Firmware update installed successfully");
+        ESP.restart();
+        return true;
+    }
+
+    Update.abort();
+    return false;
+}
+
+bool check_for_firmware_update(bool force_update = false) {
+    String release_url = String("https://api.github.com/repos/") + String(FIRMWARE_REPO_OWNER) + "/" + String(FIRMWARE_REPO_NAME) + "/releases/latest";
+    WiFiClientSecure client;
+    HTTPClient http;
+
+    if (!http.begin(client, release_url)) {
+        return false;
+    }
+
+    http.addHeader("Accept", "application/vnd.github+json");
+    http.addHeader("User-Agent", "MidShip-ESP32-SignalK");
+
+    int http_code = http.GET();
+    if (http_code != HTTP_CODE_OK) {
+        http.end();
+        return false;
+    }
+
+    String payload = http.getString();
+    http.end();
+
+    String latest_tag = extract_json_string(payload, "tag_name");
+    String latest_asset_url = find_asset_url_for_variant(payload, String(FIRMWARE_VARIANT));
+
+    if (latest_tag.length() == 0 || latest_asset_url.length() == 0) {
+        return false;
+    }
+
+    if (!force_update && latest_tag == String(FIRMWARE_VERSION)) {
+        return false;
+    }
+
+    ESP_LOGI("ARDUINO", "New firmware available: %s (%s)", latest_tag.c_str(), latest_asset_url.c_str());
+    return install_update_from_url(latest_asset_url);
+}
+
+WebServer firmware_server(8081);
+
+void handle_firmware_status() {
+    String payload = String("{\"variant\":\"") + String(FIRMWARE_VARIANT) +
+                     "\",\"version\":\"" + String(FIRMWARE_VERSION) +
+                     "\",\"wifi\":" + (WiFi.status() == WL_CONNECTED ? "true" : "false") +
+                     "}";
+    firmware_server.sendHeader("Access-Control-Allow-Origin", "*");
+    firmware_server.send(200, "application/json", payload);
+}
+
+void handle_firmware_update() {
+    if (WiFi.status() != WL_CONNECTED) {
+        firmware_server.send(200, "application/json", "{\"status\":\"wifi-disconnected\"}");
+        return;
+    }
+
+    bool update_started = check_for_firmware_update(true);
+    firmware_server.send(200, "application/json",
+                         String("{\"status\":\"") +
+                         (update_started ? "update-started" : "no-update") +
+                         "\"}");
+}
+}
 
 using namespace sensesp;
 
@@ -306,14 +493,28 @@ void setup() {
 #endif
 
 
+    ESP_LOGI("ARDUINO", "Firmware variant: %s version: %s git: %s",
+             FIRMWARE_VARIANT,
+             FIRMWARE_VERSION,
+             FIRMWARE_GIT_SHA);
+
+    firmware_server.on("/firmware/status", HTTP_GET, handle_firmware_status);
+    firmware_server.on("/firmware/update", HTTP_POST, handle_firmware_update);
+    firmware_server.begin();
+
     sensesp_app->start();
     ESP_LOGI("ARDUINO", "SensESP Started Successfully!");
+
+    if (WiFi.status() == WL_CONNECTED) {
+        check_for_firmware_update();
+    }
 }
 
 
 
 void loop() {
     event_loop()->tick();
+    firmware_server.handleClient();
 
 #ifdef ENABLE_MPPT
     if (mppt) {

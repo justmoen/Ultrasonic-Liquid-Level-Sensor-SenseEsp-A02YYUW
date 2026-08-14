@@ -1,0 +1,71 @@
+name: Build and release firmware
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        env: [esp32s3, esp32doit]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade pip && pip install platformio
+
+      - name: Build firmware
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Rename firmware artifact
+        run: |
+          mkdir -p dist/firmware
+          env_name="${{ matrix.env }}"
+          variant="tank"
+          if [ "$env_name" = "esp32doit" ]; then
+            variant="mppt"
+          fi
+          version="$(git rev-parse --short HEAD)"
+          cp .pio/build/$env_name/firmware.bin "dist/firmware/${variant}-firmware-${version}.bin"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.env }}-firmware
+          path: dist/firmware/*.bin
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.bin
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
