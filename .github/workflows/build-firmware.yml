@@ -70,7 +70,7 @@ jobs:
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}-${{ github.sha }}
+          tag_name: tank-${{ github.sha }}
           files: dist/*.bin
           generate_release_notes: true
         env:

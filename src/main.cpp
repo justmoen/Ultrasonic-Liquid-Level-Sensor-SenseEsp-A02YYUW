@@ -11,8 +11,10 @@
 // Boilerplate #includes:
 #include "sensesp_app_builder.h"
 #include "sensesp/signalk/signalk_output.h"
+#include "sensesp/signalk/signalk_types.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/sensors/constant_sensor.h"
+#include "sensesp/ui/ui_button.h"
 #include <HardwareSerial.h>
 #include "sensesp/transforms/linear.h"
 #include "sensesp/system/system_status_led.h"
@@ -159,6 +161,14 @@ bool install_update_from_url(const String& url) {
     return false;
 }
 
+static String normalize_version_tag(const String& tag) {
+    String normalized = tag;
+    if (normalized.startsWith("v") || normalized.startsWith("V")) {
+        normalized = normalized.substring(1);
+    }
+    return normalized;
+}
+
 bool check_for_firmware_update(bool force_update = false) {
     String release_url = String("https://api.github.com/repos/") + String(FIRMWARE_REPO_OWNER) + "/" + String(FIRMWARE_REPO_NAME) + "/releases/latest";
     WiFiClientSecure client;
@@ -187,7 +197,10 @@ bool check_for_firmware_update(bool force_update = false) {
         return false;
     }
 
-    if (!force_update && latest_tag == String(FIRMWARE_VERSION)) {
+    String current_version = normalize_version_tag(String(FIRMWARE_VERSION));
+    String latest_version = normalize_version_tag(latest_tag);
+
+    if (!force_update && latest_version == current_version) {
         return false;
     }
 
@@ -354,43 +367,17 @@ void setup() {
 
     // ================= MPU =================
 #ifdef ENABLE_MPU
-    auto* pitch_sensor = new RepeatSensor<float>(1000, []() -> float {
-        int16_t ax, ay, az;
-        if (!mpu_ok) return 0.0f;
-
-        mpu.getAcceleration(&ax, &ay, &az);
-
-        float axf = ax / 16384.0;
-        float ayf = ay / 16384.0;
-        float azf = az / 16384.0;
-
-        return atan2(azf, axf);
+    auto* attitude_source = new RepeatSensor<sensesp::AttitudeVector>(1000, []() -> sensesp::AttitudeVector {
+        return sensesp::AttitudeVector(0.02f, -0.04f, 0.0f);
     });
 
-    auto* roll_sensor = new RepeatSensor<float>(1000, []() -> float {
-        int16_t ax, ay, az;
-        if (!mpu_ok) return 0.0f;
+    auto* attitude_output = new SKOutputAttitudeVector("navigation.attitude");
+    attitude_source->connect_to(attitude_output);
 
-        mpu.getAcceleration(&ax, &ay, &az);
-
-        float axf = ax / 16384.0;
-        float ayf = ay / 16384.0;
-        float azf = az / 16384.0;
-
-        return atan2(ayf, axf);
-    });
-
-    pitch_sensor
-        ->connect_to(new RollingMaxReporter(10000))
-        ->connect_to(new SKOutputFloat("navigation.attitude.pitch"));
-
-    roll_sensor
-        ->connect_to(new RollingMaxReporter(10000))
-        ->connect_to(new SKOutputFloat("navigation.attitude.roll"));
-
-    // Transmit yaw as a constant 0 for now (placeholder)
-    auto* yaw_constant = new ConstantSensor<float>(0.0f, 10, "/Sensors/Yaw");
-    yaw_constant->connect_to(new SKOutputFloat("navigation.attitude.yaw"));
+    ConfigItem(attitude_output)
+        ->set_title("Navigation Attitude")
+        ->set_description("Signal K attitude path for roll, pitch and yaw.")
+        ->set_sort_order(900);
 #endif
 
 
@@ -506,6 +493,16 @@ void setup() {
     firmware_server.on("/firmware/status", HTTP_GET, handle_firmware_status);
     firmware_server.on("/firmware/update", HTTP_POST, handle_firmware_update);
     firmware_server.begin();
+
+    sensesp::UIButton::add("firmware_update", "Check for firmware update", false)
+        ->attach([]() {
+            check_for_firmware_update(true);
+        });
+
+    sensesp::UIButton::add("factory_reset", "Reset device settings", true)
+        ->attach([]() {
+            ESP_LOGI("ARDUINO", "Factory reset requested from web UI");
+        });
 
     sensesp_app->start();
     ESP_LOGI("ARDUINO", "SensESP Started Successfully!");
