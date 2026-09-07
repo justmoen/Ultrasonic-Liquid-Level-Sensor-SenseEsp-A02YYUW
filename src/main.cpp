@@ -1,5 +1,5 @@
 // ================= SENSOR ENABLE SWITCHES =================
-#if !defined(ENABLE_MPU)
+#if defined(ENABLE_TANK)
 #define ENABLE_MPU
 #endif
 
