@@ -32,13 +32,12 @@ MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
 
 void MPPT_RS485::begin() {
   pinMode(RS485_DE, OUTPUT);
-  digitalWrite(RS485_DE, LOW);  // start in RX mode
+  digitalWrite(RS485_DE, LOW);  // Start in RX mode
   serial_->begin(MPPT_BAUD, SERIAL_8N1, RS485_RX, RS485_TX);
-  last_poll_ = millis() + 5000;  // delay first poll only
+  last_poll_ = millis() + 5000;  // Delay first poll only
 }
 
 void MPPT_RS485::loop() {
-
   if (millis() - last_poll_ >= poll_interval_) {
       last_poll_ = millis();
       ESP_LOGI("MPPT", "Polling MPPT...");
@@ -53,47 +52,55 @@ void MPPT_RS485::send_command() {
   for (int i = 0; i < 7; i++) sum += frame[i];
   frame[7] = sum & 0xFF;
 
-  // clear buffer
+  // Clear incoming buffer junk before sending
   while (serial_->available()) {
-    ESP_LOGI("MAIN", "RX: %02X", serial_->read());
+    serial_->read(); 
   }
 
-ESP_LOGI("MAIN", "TX: ");
+  ESP_LOGI("MAIN", "TX: ");
   for (int i = 0; i < 8; i++) {
     ESP_LOGI("MAIN", "%02X", frame[i]);
   }
   ESP_LOGI("MAIN", "");
 
-  // TX mode
-  digitalWrite(RS485_DE, HIGH);  // Enable TX
-  delayMicroseconds(200);        // Settle
+  // Enable TX Mode
+  digitalWrite(RS485_DE, HIGH);  
+  delayMicroseconds(200);        // Wait for transceiver to settle
 
   ESP_LOGI("MAIN", "DE=TX");
 
   serial_->write(frame, 8);
-  serial_->flush();              // Wait TX complete
+  serial_->flush();              // Wait until software buffer is empty
 
-  digitalWrite(RS485_DE, LOW);   // Back to RX
-  delayMicroseconds(200);        // Settle
+  // CRITICAL FIX: At 9600 baud, 1 byte takes ~1.04ms to physically exit.
+  // Wait for the hardware UART FIFO shift register to finish transmitting.
+  delayMicroseconds(1200); 
+
+  // Switch back to RX Mode
+  digitalWrite(RS485_DE, LOW);   
+  delayMicroseconds(200);        // Wait for transceiver to settle
 
   ESP_LOGI("MAIN", "DE=RX");
-  delay(10);                     // Allow reply
 }
 
 bool MPPT_RS485::read_response(uint8_t* buffer, size_t len) {
-  uint32_t start = millis();     // Fix scope
+  uint32_t start = millis();     
   size_t index = 0;
 
-  ESP_LOGI("MAIN", "RX: ");
+  ESP_LOGI("MAIN", "RX Begin...");
 
   while (millis() - start < 1500) {
     if (serial_->available()) {
       uint8_t b = serial_->read();
       ESP_LOGI("MAIN", "RX: %02X", b);
 
-      buffer[index++] = b;
+      // Protect against buffer overflow in case of line noise
+      if (index < len) {
+        buffer[index++] = b;
+      }
+      
       if (index >= len) {
-        ESP_LOGI("MAIN", "");
+        ESP_LOGI("MAIN", " Response Complete");
         return true;
       }
     }
@@ -109,18 +116,18 @@ void MPPT_RS485::poll() {
   send_command();
 
   if (!read_response(response, 21)) {
-    comm_error->emit(1);
+    comm_error->emit(1); // Error 1: Timeout
     return;
   }
 
   uint16_t sum = 0;
   for (int i = 0; i < 20; i++) sum += response[i];
   if ((sum & 0xFF) != response[20]) {
-    comm_error->emit(2);
+    comm_error->emit(2); // Error 2: Checksum Failure
     return;
   }
 
-  comm_error->emit(0);
+  comm_error->emit(0); // Success
 
   uint8_t status = response[3];
 

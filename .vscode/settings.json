@@ -4,5 +4,6 @@
         "type": true,
         "true": true,
         "\"$HOME\"/.platformio/penv/bin/platformio": true
-    }
+    },
+    "idf.port": "/dev/tty.usbserial-110"
 }
