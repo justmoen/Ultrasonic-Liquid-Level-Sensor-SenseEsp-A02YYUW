@@ -6,6 +6,11 @@
 #if !defined(ENABLE_TANK) && !defined(ENABLE_MPPT)
 #define ENABLE_TANK
 #endif
+
+// Automatically enable Battery SoC only when MPPT (DOIT board) is active
+#ifdef ENABLE_MPPT
+#define ENABLE_BATTERY_SOC
+#endif
 // =========================================================
 
 // Boilerplate #includes:
@@ -27,6 +32,11 @@
 #include <algorithm>
 #include <limits>
 #include "firmware_version.h"
+
+// Conditionally include AnalogInput to optimize build sizes
+#ifdef ENABLE_BATTERY_SOC
+#include "sensesp/sensors/analog_input.h"
+#endif
 
 // Sensor-specific includes
 #ifdef ENABLE_TANK
@@ -170,7 +180,7 @@ namespace {
     }
 
     bool check_for_firmware_update(bool force_update = false) {
-        String release_url = String("https://api.github.com/repos/") + String(FIRMWARE_REPO_OWNER) + "/" + String(FIRMWARE_REPO_NAME) + "/releases/latest";
+        String release_url = String("https://github.com") + String(FIRMWARE_REPO_OWNER) + "/" + String(FIRMWARE_REPO_NAME) + "/releases/latest";
         WiFiClientSecure client;
         HTTPClient http;
 
@@ -309,10 +319,18 @@ int read_sensor_status () {
 MPPT_RS485* mppt = nullptr;
 #endif
 
+// ================= BATTERY SOC =================
+#ifdef ENABLE_BATTERY_SOC
+// GPIO 34 routes to ADC1 channel 6 on the esp32doit. It is safe from WiFi conflicts.
+const uint8_t kBatteryAdcPin = 34;
+const unsigned int kBatteryReadInterval = 2000; // Sample the battery bank every 2 seconds
+#endif
 
 
+// ================= ARDUINO SETUP & LOOP =================
 void setup() {
-
+  // Replaced SetupSerial() with the native Arduino initialization
+  Serial.begin(115200);
 #ifdef ENABLE_TANK
     pinMode(rxPin, INPUT);
     pinMode(txPin, OUTPUT);
@@ -345,8 +363,7 @@ void setup() {
     }
 #endif
 
-
-    // SensESP app
+      // SensESP app
     auto builder = new SensESPAppBuilder();
     auto safe_led = std::make_shared<SystemStatusLed>(0);
 
@@ -439,7 +456,29 @@ void setup() {
         }))
         ->connect_to(new RollingMaxReporter(report_interval_ms))
         ->connect_to(new SKOutputFloat(sk_path));
-#endif
+  #endif
+
+  // ---------------------------------------------------------
+  // Conditional Initialization: Battery SoC Pipeline
+  // ---------------------------------------------------------
+  #ifdef ENABLE_BATTERY_SOC
+  // 1. SensESP reads the raw analog pin and scales it as a float from 0.0 to 1.0 (0V to 3.3V)
+  auto* battery_analog_input = new AnalogInput(kBatteryAdcPin, kBatteryReadInterval);
+
+  // 2. Map the 0.0 - 1.0 software output value directly to a 0.0 - 1.0 Signal K ratio structure.
+  // Resistors R1 (1.5k) and R2 (3.3k) step down a 4.8V battery max perfectly to 3.3V at the pin, keeping multiplier at 1.0.
+  auto* battery_soc_transform = new Linear(1.0, 0.0, "/Battery/SoC/Calibration");
+
+  // 3. Output payload targeting the standardized Signal K schema for battery banks
+  auto* battery_soc_sk_output = new SKOutputFloat(
+      "electrical.batteries.house.stateOfCharge",
+      "/Battery/SoC/SKPath",
+      new SKMetadata("ratio", "House Battery State of Charge")
+  );
+
+  // Connect components to build the execution pipeline
+  battery_analog_input->connect_to(battery_soc_transform)->connect_to(battery_soc_sk_output);
+  #endif
 
 
     // ================= MPPT =================
@@ -492,18 +531,18 @@ void setup() {
             new SKOutputString("notifications.electrical.chargers.motorMPPT.overTemperature"));
     }
 #endif
-
-
-    ESP_LOGI("ARDUINO", "Firmware variant: %s version: %s git: %s",
+  // ---------------------------------------------------------// Web Server Routing for OTA Upgrades// ---------------------------------------------------------
+  ESP_LOGI("ARDUINO", "Firmware variant: %s version: %s git: %s",
              FIRMWARE_VARIANT,
              FIRMWARE_VERSION,
              FIRMWARE_GIT_SHA);
 
-    firmware_server.on("/firmware/status", HTTP_GET, handle_firmware_status);
-    firmware_server.on("/firmware/update", HTTP_POST, handle_firmware_update);
-    firmware_server.begin();
-
-    sensesp::UIButton::add("firmware_update", "Check for firmware update", false)
+  firmware_server.on("/status", HTTP_GET, handle_firmware_status);
+  firmware_server.on("/update", HTTP_POST, handle_firmware_update);
+  firmware_server.begin();
+  
+  // Start SensESP network operations
+  sensesp::UIButton::add("firmware_update", "Check for firmware update", false)
         ->attach([]() {
             check_for_firmware_update(true);
         });
@@ -513,8 +552,8 @@ void setup() {
             ESP_LOGI("ARDUINO", "Factory reset requested from web UI");
         });
 
-    sensesp_app->start();
-    ESP_LOGI("ARDUINO", "SensESP Started Successfully!");
+  sensesp_app->start();
+  ESP_LOGI("ARDUINO", "SensESP Started Successfully!");
 
     if (WiFi.status() == WL_CONNECTED) {
         check_for_firmware_update();
@@ -524,12 +563,13 @@ void setup() {
 
 
 void loop() {
+    // Pass execution control directly to the SensESP v3 asynchronous event core loop
     event_loop()->tick();
     firmware_server.handleClient();
 
-#ifdef ENABLE_MPPT
+    #ifdef ENABLE_MPPT
     if (mppt) {
         mppt->loop();
     }
-#endif
+    #endif
 }
