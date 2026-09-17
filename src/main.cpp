@@ -321,11 +321,12 @@ MPPT_RS485* mppt = nullptr;
 
 // ================= BATTERY SOC =================
 #ifdef ENABLE_BATTERY_SOC
-// GPIO 34 routes to ADC1 channel 6 on the esp32doit. It is safe from WiFi conflicts.
-const uint8_t kBatteryAdcPin = 34;
-const unsigned int kBatteryReadInterval = 2000; // Sample the battery bank every 2 seconds
+#define DISPLAY_UART_NUM 2
+#define DISPLAY_RX_PIN 25
+#define DISPLAY_TX_PIN -1
+#define DISPLAY_BAUD 115200
+HardwareSerial displaySerial(DISPLAY_UART_NUM);
 #endif
-
 
 // ================= ARDUINO SETUP & LOOP =================
 void setup() {
@@ -462,23 +463,50 @@ void setup() {
   // Conditional Initialization: Battery SoC Pipeline
   // ---------------------------------------------------------
   #ifdef ENABLE_BATTERY_SOC
-  // 1. SensESP reads the raw analog pin and scales it as a float from 0.0 to 1.0 (0V to 3.3V)
-  auto* battery_analog_input = new AnalogInput(kBatteryAdcPin, kBatteryReadInterval);
 
-  // 2. Map the 0.0 - 1.0 software output value directly to a 0.0 - 1.0 Signal K ratio structure.
-  // Resistors R1 (1.5k) and R2 (3.3k) step down a 4.8V battery max perfectly to 3.3V at the pin, keeping multiplier at 1.0.
-  auto* battery_soc_transform = new Linear(1.0, 0.0, "/Battery/SoC/Calibration");
+    // ---------------------------------------------------------
+    // Display UART sniffer
+    // ---------------------------------------------------------
 
-  // 3. Output payload targeting the standardized Signal K schema for battery banks
-  auto* battery_soc_sk_output = new SKOutputFloat(
-      "electrical.batteries.house.stateOfCharge",
-      "/Battery/SoC/SKPath",
-      new SKMetadata("ratio", "House Battery State of Charge")
-  );
+    Serial.println();
+    Serial.println("========================================");
+    Serial.println("DISPLAY UART SNIFFER");
+    Serial.println("========================================");
+    Serial.printf("UART:      %d\n", DISPLAY_UART_NUM);
+    Serial.printf("RX GPIO:   %d\n", DISPLAY_RX_PIN);
+    Serial.printf("TX GPIO:   %d\n", DISPLAY_TX_PIN);
+    Serial.printf("BAUD:      %d\n", DISPLAY_BAUD);
+    Serial.println("FORMAT:    8N1");
+    Serial.println("========================================");
 
-  // Connect components to build the execution pipeline
-  battery_analog_input->connect_to(battery_soc_transform)->connect_to(battery_soc_sk_output);
-  #endif
+    displaySerial.begin(
+        DISPLAY_BAUD,
+        SERIAL_8N1,
+        DISPLAY_RX_PIN,
+        DISPLAY_TX_PIN
+    );
+
+    pinMode(DISPLAY_RX_PIN, INPUT_PULLUP); 
+    delay(100);
+
+    Serial.println("Display UART initialized.");
+
+    // Signal K output can remain here for now.
+    auto* bms_soc_output = new sensesp::SKOutputFloat(
+        "propulsion.main.battery.stateOfCharge",
+        "/sensors/bms/soc",
+        new sensesp::SKMetadata("%", "State of Charge")
+    );
+
+    ESP_LOGI(
+        "BMS_DEBUG",
+        "Sniffer active: UART%d RX GPIO%d @ %d baud",
+        DISPLAY_UART_NUM,
+        DISPLAY_RX_PIN,
+        DISPLAY_BAUD
+    );
+
+#endif
 
 
     // ================= MPPT =================
@@ -570,6 +598,20 @@ void loop() {
     #ifdef ENABLE_MPPT
     if (mppt) {
         mppt->loop();
+    }
+    #endif
+
+    #ifdef ENABLE_BATTERY_SOC
+    while (displaySerial.available() > 0) {
+        int value = displaySerial.read();
+
+        if (value >= 0) {
+            Serial.printf(
+                "[DISPLAY RX GPIO%d] %02X\n",
+                DISPLAY_RX_PIN,
+                static_cast<uint8_t>(value)
+            );
+        }
     }
     #endif
 }
