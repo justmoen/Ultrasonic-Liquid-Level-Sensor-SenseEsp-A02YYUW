@@ -376,9 +376,12 @@ class EVPowerMonitorBridge {
       // --------------------------------------------------------------
       
       // 1. Extract Voltage (Indices 8 & 9)
-      uint16_t rawVolts = (frame[9] << 8) | frame[8];
-      // Adjusted calibration offset to land precisely on 80.3V from 1068 raw counts
-      float liveVoltage = (float)rawVolts / 13.3; 
+      uint16_t rawVolts =
+        static_cast<uint16_t>(frame[3]) |
+        (static_cast<uint16_t>(frame[4]) << 8);
+
+      float liveVoltage =
+        static_cast<float>(rawVolts) / 10.0f;
 
       // 2. Extract Current (Indices 6 & 7)
       uint16_t rawCurrent = (frame[7] << 8) | frame[6];
@@ -680,4 +683,5 @@ void loop() {
         mppt->loop();
     }
     #endif
+    vTaskDelay(pdMS_TO_TICKS(1));
 }
