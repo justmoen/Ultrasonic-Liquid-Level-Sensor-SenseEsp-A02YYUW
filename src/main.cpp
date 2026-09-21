@@ -326,7 +326,6 @@ MPPT_RS485* mppt = nullptr;
 #define FRAME_SIZE   13
 #define BMS_RX_PIN   25
 #define DUMMY_TX_PIN -1
-#endif
 
 class EVPowerMonitorBridge {
   private:
@@ -423,6 +422,7 @@ void uartReaderTask(void* pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(2)); 
   }
 }
+#endif
 
 // ================= ARDUINO SETUP & LOOP =================
 void setup() {
