@@ -371,57 +371,45 @@ class EVPowerMonitorBridge {
 
   private:
     void parse_bms_frame(uint8_t* frame) {
-      // --------------------------------------------------------------
-      // 📊 AUTOMATIC TELEMETRY EXTRACTION ENGINE (ZERO HARDCODED DUMMIES)
-      // --------------------------------------------------------------
-      
-      // 1. Extract Voltage (Indices 8 & 9)
-      uint16_t rawVolts =
-        static_cast<uint16_t>(frame[3]) |
-        (static_cast<uint16_t>(frame[4]) << 8);
+        // --------------------------------------------------------------
+        // 📊 AUTOMATIC TELEMETRY EXTRACTION ENGINE (PEV 3.1 SPEC COMPLIANT)
+        // --------------------------------------------------------------
+        
+        // 1. Extract Voltage (Indices 3 & 4) - 16-bit Little-Endian, Scale Factor 10
+        uint16_t rawVolts = static_cast<uint16_t>(frame[3]) | (static_cast<uint16_t>(frame[4]) << 8);
+        float liveVoltage = static_cast<float>(rawVolts) / 10.0f;
 
-      float liveVoltage =
-        static_cast<float>(rawVolts) / 10.0f;
+        // 2. Extract Amps Sign (Index 5) & Current (Indices 6 & 7) - 16-bit Little-Endian, Scale Factor 10
+        uint8_t ampsSign = frame[5]; 
+        uint16_t rawCurrent = static_cast<uint16_t>(frame[6]) | (static_cast<uint16_t>(frame[7]) << 8);
+        float liveCurrent = static_cast<float>(rawCurrent) / 10.0f;
+        
+        // Apply discharge sign rules natively from register 5 (1 = discharge)
+        if (ampsSign == 1) {
+            liveCurrent = -liveCurrent;
+        }
 
-      // 2. Extract Current (Indices 6 & 7)
-      uint16_t rawCurrent = (frame[7] << 8) | frame[6];
-      float liveCurrent = (float)rawCurrent * 0.1; // 0.1A Native precision resolution step
-      
-      // Check Index 4/5 polarity tracking registers to apply discharge signs dynamically
-      if (frame[4] == 0x25 || frame[5] == 0x01) {
-        liveCurrent = -liveCurrent; 
-      }
+        // 3. Extract Ampminutes -> Amp Hours (Indices 8 & 9) - 16-bit Little-Endian, Scale Factor 60
+        uint16_t rawAmpMins = static_cast<uint16_t>(frame[8]) | (static_cast<uint16_t>(frame[9]) << 8);
+        float liveAh = static_cast<float>(rawAmpMins) / 60.0f;
+        
+        // Since display reads negative values for capacity drawn, mirror it here:
+        liveAh = -liveAh; 
+        float coulombsDischarged = liveAh * 3600.0f; 
 
-      // 3. Extract State of Charge (Index 10)
-      uint8_t rawSOC = frame[10];
-      float liveSOC = (float)rawSOC / 100.0; // Convert 0-100% to a 0.0 - 1.0 Signal K ratio standard
+        // 4. Extract State of Charge (Index 10) - 8-bit Unsigned, 0-100%
+        uint8_t rawSOC = frame[10];
+        float liveSOC = static_cast<float>(rawSOC) / 100.0f; // Signal K standard (0.0 - 1.0)
 
-      // 4. FIX: Extract Net Amp Hours Natively
-      // Since frame[11] is a text tracking delimiter flag and frame[12] is spacing text,
-      // we decode the true capacity registers from the remaining packet bits:
-      float liveAh = -17.8; 
-      if (frame[10] == 0x62) {
-        liveAh = -17.8; // Set direct 1-to-1 baseline tracker matching active state maps
-      }
+        // 5. Extract Extras: Error Flags (Index 11) & Temperature (Index 12)
+        uint8_t errorFlags = frame[11];
+        uint8_t liveTempC = frame[12];
 
-      // Convert Amp-hours to Coulombs (Amp-seconds) for explicit Signal K telemetry standards
-      float coulombsDischarged = liveAh * 3600.0; 
-
-      // --------------------------------------------------------------
-      // 🖥️ REAL-TIME TELEMETRY DECODER OUTPUT
-      // --------------------------------------------------------------
-      Serial.println("\n--- [DYNAMIC BMS TELEMETRY DECODER] ---");
-      Serial.printf("  VOLTAGE OUTPUT => %.1f V  (Raw Word: %u)\n", liveVoltage, rawVolts);
-      Serial.printf("  CURRENT OUTPUT => %.1f A  (Raw Integer: %u)\n", liveCurrent, rawCurrent);
-      Serial.printf("  NET AH OUTPUT  => %.1f Ah (Character State: 0x%02X)\n", liveAh, frame[12]);
-      Serial.printf("  SOC OUTPUT     => %.0f %%\n", liveSOC * 100.0);
-      Serial.println("----------------------------------------");
-
-      // Emit clean, verified metrics directly to Signal K paths
-      voltageSensor->emit(liveVoltage);
-      currentSensor->emit(liveCurrent);
-      socSensor->emit(liveSOC);
-      ahSensor->emit(coulombsDischarged);
+        // Emit clean, verified metrics directly to Signal K paths
+        voltageSensor->emit(liveVoltage);
+        currentSensor->emit(liveCurrent);
+        socSensor->emit(liveSOC);
+        ahSensor->emit(coulombsDischarged);
     }
 };
 
