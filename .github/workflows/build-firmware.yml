@@ -27,13 +27,7 @@ jobs:
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          pip install platformio
-
-      # NEW STEP: Purge structural package artifacts to bypass poisoned framework dependencies
-      - name: Initialize and Clean PlatformIO Target
-        run: |
-          pio system prune --force
-          mkdir -p .pio
+          python -m pip install platformio
 
       - name: Build firmware
         run: pio run -e ${{ matrix.env }}
@@ -46,8 +40,8 @@ jobs:
           if [ "$env_name" = "esp32doit" ]; then
             variant="mppt"
           fi
-          version="$(git rev-parse --short HEAD)"
-          cp .pio/build/$env_name/firmware.bin "dist/firmware/${variant}-firmware-${version}.bin"
+          version="${GITHUB_SHA::7}"
+          cp ".pio/build/${env_name}/firmware.bin" "dist/firmware/${variant}-firmware-${version}.bin"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -72,14 +66,15 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: dist/firmware
           merge-multiple: true
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: tank-${{ github.sha }}
-          files: dist/*.bin
+          tag_name: firmware-${{ github.sha }}
+          name: Firmware ${{ github.sha }}
+          files: dist/firmware/*.bin
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
