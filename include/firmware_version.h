@@ -1,5 +1,5 @@
 #pragma once
 
-#define FIRMWARE_VERSION "tank-a7c64ed"
+#define FIRMWARE_VERSION "tank-7e5f7f4"
 #define FIRMWARE_VARIANT "tank"
-#define FIRMWARE_GIT_SHA "a7c64ed"
+#define FIRMWARE_GIT_SHA "7e5f7f4"
