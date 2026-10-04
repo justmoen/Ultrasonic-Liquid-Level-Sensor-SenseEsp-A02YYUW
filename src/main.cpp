@@ -182,7 +182,9 @@ namespace {
     }
 
     bool check_for_firmware_update(bool force_update = false) {
-        String release_url = String("https://github.com") + String(FIRMWARE_REPO_OWNER) + "/" + String(FIRMWARE_REPO_NAME) + "/releases/latest";
+        String release_url = String("https://api.github.com/repos/") +
+                             String(FIRMWARE_REPO_OWNER) + "/" +
+                             String(FIRMWARE_REPO_NAME) + "/releases/latest";
         WiFiClientSecure client;
         HTTPClient http;
 
