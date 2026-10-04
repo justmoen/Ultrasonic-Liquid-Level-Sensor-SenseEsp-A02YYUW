@@ -539,7 +539,10 @@ void setup() {
     const char* sk_path = "tanks.fuel.0.currentLevel";
 
     const float empty_value = 40.0;
-    const float full_value = 0.0;
+    // A02YYUW reports valid distances from 3 cm upward; readings below that
+    // are discarded, leaving the last valid distance in place. Calibrate that
+    // minimum range as full so the output can reach 100% as the liquid rises.
+    const float full_value = 3.0;
 
     const float multiplier = 1.0 / (full_value - empty_value);
     const float offset = -empty_value * multiplier;
