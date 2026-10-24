@@ -14,6 +14,8 @@ Using a mobile phone or similar that is connected to your boats Wi-Fi you will t
 
 From this portal you can check the status of the ESP32 and make run time configuration changes to Wi-Fi settings and sample rates as well as rebooting the device. At this point you can also change the device hostname sensesp.local to something more meaningful to your set up - e.g. watersensor.local.
 
+To update the firmware, click **Check for firmware update** in the SensESP web UI. The device must have internet access so it can check GitHub and synchronize its clock for HTTPS certificate validation. The update endpoint is `POST http://<device-hostname>:8081/update`; `GET http://<device-hostname>:8081/status` reports the installed variant and version. The updater reports `up-to-date` when the latest firmware is already installed, or a specific error status if the release check, download, or flash fails. If the device is running firmware without the OTA updater, install a build over USB first.
+
 Configure SignalK to accept data from the sensor following SensESP documentation
 
 Test the sensor using methods outlined on the internet and then install.

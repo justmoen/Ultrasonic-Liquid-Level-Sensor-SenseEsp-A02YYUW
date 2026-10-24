@@ -31,7 +31,9 @@
 #include <WebServer.h>
 #include <algorithm>
 #include <limits>
+#include <time.h>
 #include "firmware_version.h"
+#include "firmware_root_ca.h"
 
 // Conditionally include AnalogInput to optimize build sizes
 #ifdef ENABLE_BATTERY_SOC
@@ -56,6 +58,46 @@
 #endif
 
 namespace {
+    enum class FirmwareUpdateResult {
+        kInstalled,
+        kUpToDate,
+        kReleaseCheckFailed,
+        kReleaseDataInvalid,
+        kDownloadFailed,
+        kFlashFailed
+    };
+
+    const char* firmware_update_status(FirmwareUpdateResult result) {
+        switch (result) {
+            case FirmwareUpdateResult::kInstalled: return "update-started";
+            case FirmwareUpdateResult::kUpToDate: return "up-to-date";
+            case FirmwareUpdateResult::kReleaseCheckFailed: return "release-check-failed";
+            case FirmwareUpdateResult::kReleaseDataInvalid: return "release-data-invalid";
+            case FirmwareUpdateResult::kDownloadFailed: return "download-failed";
+            case FirmwareUpdateResult::kFlashFailed: return "flash-failed";
+        }
+        return "update-failed";
+    }
+
+    bool ensure_system_time() {
+        constexpr time_t kValidTimeThreshold = 1700000000;
+        if (time(nullptr) >= kValidTimeThreshold) {
+            return true;
+        }
+
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+        unsigned long start = millis();
+        while (time(nullptr) < kValidTimeThreshold && millis() - start < 15000) {
+            delay(250);
+        }
+
+        if (time(nullptr) < kValidTimeThreshold) {
+            ESP_LOGE("ARDUINO", "Unable to synchronize system time for TLS verification");
+            return false;
+        }
+        return true;
+    }
+
     String extract_json_string(const String& json, const String& key) {
         String needle = "\"" + key + "\"";
         int key_pos = json.indexOf(needle);
@@ -111,30 +153,35 @@ namespace {
         return "";
     }
 
-    bool install_update_from_url(const String& url) {
+    FirmwareUpdateResult install_update_from_url(const String& url) {
         WiFiClientSecure client;
+        client.setCACert(FIRMWARE_ROOT_CA);
         HTTPClient http;
 
         if (!http.begin(client, url)) {
-            return false;
+            ESP_LOGE("ARDUINO", "Failed to initialize firmware download");
+            return FirmwareUpdateResult::kDownloadFailed;
         }
 
         http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
         int http_code = http.GET();
         if (http_code != HTTP_CODE_OK) {
+            ESP_LOGE("ARDUINO", "Firmware download failed with HTTP status %d", http_code);
             http.end();
-            return false;
+            return FirmwareUpdateResult::kDownloadFailed;
         }
 
         int content_length = http.getSize();
         if (content_length <= 0) {
+            ESP_LOGE("ARDUINO", "Firmware download has invalid content length: %d", content_length);
             http.end();
-            return false;
+            return FirmwareUpdateResult::kDownloadFailed;
         }
 
         if (!Update.begin(content_length)) {
+            ESP_LOGE("ARDUINO", "Unable to start firmware update: %s", Update.errorString());
             http.end();
-            return false;
+            return FirmwareUpdateResult::kFlashFailed;
         }
 
         WiFiClient* stream = http.getStreamPtr();
@@ -153,7 +200,7 @@ namespace {
                 break;
             }
 
-            if (Update.write(buffer, bytes_read) != bytes_read) {
+            if (Update.write(buffer, bytes_read) != static_cast<size_t>(bytes_read)) {
                 break;
             }
 
@@ -165,12 +212,12 @@ namespace {
 
         if (success) {
             ESP_LOGI("ARDUINO", "Firmware update installed successfully");
-            ESP.restart();
-            return true;
+            return FirmwareUpdateResult::kInstalled;
         }
 
+        ESP_LOGE("ARDUINO", "Firmware update failed: %s", Update.errorString());
         Update.abort();
-        return false;
+        return FirmwareUpdateResult::kFlashFailed;
     }
 
     static String normalize_version_tag(const String& tag) {
@@ -181,15 +228,21 @@ namespace {
         return normalized;
     }
 
-    bool check_for_firmware_update(bool force_update = false) {
+    FirmwareUpdateResult check_for_firmware_update() {
+        if (!ensure_system_time()) {
+            return FirmwareUpdateResult::kReleaseCheckFailed;
+        }
+
         String release_url = String("https://api.github.com/repos/") +
                              String(FIRMWARE_REPO_OWNER) + "/" +
                              String(FIRMWARE_REPO_NAME) + "/releases/latest";
         WiFiClientSecure client;
+        client.setCACert(FIRMWARE_ROOT_CA);
         HTTPClient http;
 
         if (!http.begin(client, release_url)) {
-            return false;
+            ESP_LOGE("ARDUINO", "Failed to initialize GitHub release check");
+            return FirmwareUpdateResult::kReleaseCheckFailed;
         }
 
         http.addHeader("Accept", "application/vnd.github+json");
@@ -197,8 +250,9 @@ namespace {
 
         int http_code = http.GET();
         if (http_code != HTTP_CODE_OK) {
+            ESP_LOGE("ARDUINO", "GitHub release check failed with HTTP status %d", http_code);
             http.end();
-            return false;
+            return FirmwareUpdateResult::kReleaseCheckFailed;
         }
 
         String payload = http.getString();
@@ -208,14 +262,23 @@ namespace {
         String latest_asset_url = find_asset_url_for_variant(payload, String(FIRMWARE_VARIANT));
 
         if (latest_tag.length() == 0 || latest_asset_url.length() == 0) {
-            return false;
+            ESP_LOGE("ARDUINO", "Latest GitHub release is missing a tag or %s firmware asset",
+                     FIRMWARE_VARIANT);
+            return FirmwareUpdateResult::kReleaseDataInvalid;
         }
 
         String current_version = normalize_version_tag(String(FIRMWARE_VERSION));
-        String latest_version = normalize_version_tag(latest_tag);
-
-        if (!force_update && latest_version == current_version) {
-            return false;
+        int asset_name_start = latest_asset_url.lastIndexOf('/') + 1;
+        String asset_name = latest_asset_url.substring(asset_name_start);
+        String asset_prefix = String(FIRMWARE_VARIANT) + "-firmware-";
+        if (asset_name.startsWith(asset_prefix) && asset_name.endsWith(".bin")) {
+            String asset_version = asset_name.substring(asset_prefix.length(),
+                                                        asset_name.length() - 4);
+            if (current_version == asset_version ||
+                current_version == String(FIRMWARE_VARIANT) + "-" + asset_version) {
+                ESP_LOGI("ARDUINO", "Firmware is already current: %s", current_version.c_str());
+                return FirmwareUpdateResult::kUpToDate;
+            }
         }
 
         ESP_LOGI("ARDUINO", "New firmware available: %s (%s)", latest_tag.c_str(), latest_asset_url.c_str());
@@ -239,11 +302,20 @@ namespace {
             return;
         }
 
-        bool update_started = check_for_firmware_update(true);
-        firmware_server.send(200, "application/json",
-                            String("{\"status\":\"") +
-                            (update_started ? "update-started" : "no-update") +
-                            "\"}");
+        FirmwareUpdateResult result = check_for_firmware_update();
+        int http_status = result == FirmwareUpdateResult::kReleaseCheckFailed ||
+                                  result == FirmwareUpdateResult::kDownloadFailed
+                              ? 502
+                              : result == FirmwareUpdateResult::kFlashFailed ||
+                                        result == FirmwareUpdateResult::kReleaseDataInvalid
+                                    ? 500
+                                    : 200;
+        firmware_server.send(http_status, "application/json",
+                             String("{\"status\":\"") + firmware_update_status(result) + "\"}");
+        if (result == FirmwareUpdateResult::kInstalled) {
+            delay(500);
+            ESP.restart();
+        }
     }
 }
 
@@ -648,7 +720,12 @@ void setup() {
   // Start SensESP network operations
   sensesp::UIButton::add("firmware_update", "Check for firmware update", false)
         ->attach([]() {
-            check_for_firmware_update(true);
+            FirmwareUpdateResult result = check_for_firmware_update();
+            ESP_LOGI("ARDUINO", "Firmware update check result: %s", firmware_update_status(result));
+            if (result == FirmwareUpdateResult::kInstalled) {
+                delay(500);
+                ESP.restart();
+            }
         });
 
     sensesp::UIButton::add("factory_reset", "Reset device settings", true)
@@ -660,7 +737,12 @@ void setup() {
   ESP_LOGI("ARDUINO", "SensESP Started Successfully!");
 
     if (WiFi.status() == WL_CONNECTED) {
-        check_for_firmware_update();
+        FirmwareUpdateResult result = check_for_firmware_update();
+        ESP_LOGI("ARDUINO", "Startup firmware update check result: %s",
+                 firmware_update_status(result));
+        if (result == FirmwareUpdateResult::kInstalled) {
+            ESP.restart();
+        }
     }
 }
 
