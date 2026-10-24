@@ -615,24 +615,24 @@ void setup() {
             new SKOutputFloat("electrical.chargers.motorMPPT.ExternalTemperature1"));
     }
 
-    if (mppt->alarm_operating) {
-        mppt->alarm_operating->connect_to(
-            new SKOutputString("notifications.electrical.chargers.motorMPPT.operatingFault"));
+    if (mppt->operating_fault) {
+        mppt->operating_fault->connect_to(
+            new SKOutputBool("electrical.chargers.motorMPPT.operatingFault"));
     }
 
-    if (mppt->alarm_battery) {
-        mppt->alarm_battery->connect_to(
-            new SKOutputString("notifications.electrical.chargers.motorMPPT.batteryOverDischarge"));
+    if (mppt->battery_overdischarge) {
+        mppt->battery_overdischarge->connect_to(
+            new SKOutputBool("electrical.chargers.motorMPPT.batteryOverDischarge"));
     }
 
-    if (mppt->alarm_fan) {
-        mppt->alarm_fan->connect_to(
-            new SKOutputString("notifications.electrical.chargers.motorMPPT.fanFault"));
+    if (mppt->fan_fault) {
+        mppt->fan_fault->connect_to(
+            new SKOutputBool("electrical.chargers.motorMPPT.fanFault"));
     }
 
-    if (mppt->alarm_overtemp) {
-        mppt->alarm_overtemp->connect_to(
-            new SKOutputString("notifications.electrical.chargers.motorMPPT.overTemperature"));
+    if (mppt->over_temperature) {
+        mppt->over_temperature->connect_to(
+            new SKOutputBool("electrical.chargers.motorMPPT.overTemperature"));
     }
 #endif
   // ---------------------------------------------------------// Web Server Routing for OTA Upgrades// ---------------------------------------------------------

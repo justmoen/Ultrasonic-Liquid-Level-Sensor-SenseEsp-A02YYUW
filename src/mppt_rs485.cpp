@@ -44,11 +44,6 @@ MPPT_RS485::MPPT_RS485(uint8_t address, uint32_t poll_interval)
 
   comm_error = new FloatProducer();
 
-  alarm_operating = new StringProducer();
-  alarm_battery = new StringProducer();
-  alarm_fan = new StringProducer();
-  alarm_overtemp = new StringProducer();
-
   // IMPORTANT:
   // MPPT gets its own UART.
   // BMS remains on Serial2.
@@ -302,31 +297,6 @@ void MPPT_RS485::poll() {
 
   charge_short_circuit->emit(
       charge_short_bit
-  );
-
-
-  alarm_operating->emit(
-      operating_fault_bit
-          ? "Operating fault"
-          : "normal"
-  );
-
-  alarm_battery->emit(
-      battery_overdischarge_bit
-          ? "Battery overdischarge"
-          : "normal"
-  );
-
-  alarm_fan->emit(
-      fan_fault_bit
-          ? "Fan fault"
-          : "normal"
-  );
-
-  alarm_overtemp->emit(
-      overtemp_bit
-          ? "Over temperature"
-          : "Normal"
   );
 
 

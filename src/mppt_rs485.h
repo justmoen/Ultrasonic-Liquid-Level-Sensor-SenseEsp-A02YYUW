@@ -28,11 +28,6 @@ class MPPT_RS485 : public ValueProducer<float> {
 
   FloatProducer* comm_error;
 
-  StringProducer* alarm_operating;
-  StringProducer* alarm_battery;
-  StringProducer* alarm_fan;
-  StringProducer* alarm_overtemp;
-
  private:
   uint8_t address_;
   uint32_t poll_interval_;
