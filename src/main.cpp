@@ -377,10 +377,12 @@ const byte rxPin = 6;
 
 HardwareSerial sensorSerial(1);
 UltrasonicA02YYUW sensor(sensorSerial, rxPin, txPin);
+constexpr float tank_empty_distance_cm = 40.0f;
 
 float read_level_callback () { 
     sensor.update(); 
-    return sensor.getDistance(); 
+    const float distance_cm = sensor.getDistance();
+    return distance_cm > 0.0f ? distance_cm : tank_empty_distance_cm;
 }
 
 int read_sensor_status () { 
@@ -612,7 +614,7 @@ void setup() {
 
     const char* sk_path = "tanks.fuel.0.currentLevel";
 
-    const float empty_value = 40.0;
+    const float empty_value = tank_empty_distance_cm;
     // A02YYUW reports valid distances from 3 cm upward; readings below that
     // are discarded, leaving the last valid distance in place. Calibrate that
     // minimum range as full so the output can reach 100% as the liquid rises.
