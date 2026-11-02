@@ -58,6 +58,11 @@
 #endif
 
 namespace {
+    constexpr uint32_t signalk_tx_watchdog_interval_ms = 30000;
+    constexpr uint32_t signalk_tx_stale_timeout_ms = 120000;
+    uint32_t last_signalk_delta_tx_ms = 0;
+    bool signalk_was_connected = false;
+
     enum class FirmwareUpdateResult {
         kInstalled,
         kUpToDate,
@@ -737,6 +742,37 @@ void setup() {
 
   sensesp_app->start();
   ESP_LOGI("ARDUINO", "SensESP Started Successfully!");
+
+  auto sk_client = sensesp_app->get_ws_client();
+  if (sk_client == nullptr) {
+      ESP_LOGE("ARDUINO", "Signal K WebSocket client is unavailable; connection watchdog not started");
+  } else {
+      sk_client->get_delta_tx_count_producer().connect_to(
+          new LambdaConsumer<int>([](int) {
+              last_signalk_delta_tx_ms = millis();
+          }));
+
+      event_loop()->onRepeat(signalk_tx_watchdog_interval_ms, [sk_client]() {
+          if (WiFi.status() != WL_CONNECTED || !sk_client->is_connected()) {
+              signalk_was_connected = false;
+              return;
+          }
+
+          const uint32_t now = millis();
+          if (!signalk_was_connected) {
+              signalk_was_connected = true;
+              last_signalk_delta_tx_ms = now;
+              return;
+          }
+
+          if (now - last_signalk_delta_tx_ms >= signalk_tx_stale_timeout_ms) {
+              ESP_LOGW("ARDUINO", "No Signal K deltas sent for 2 minutes; restarting WebSocket connection");
+              last_signalk_delta_tx_ms = now;
+              signalk_was_connected = false;
+              sk_client->restart();
+          }
+      });
+  }
 
     if (WiFi.status() == WL_CONNECTED) {
         FirmwareUpdateResult result = check_for_firmware_update();
