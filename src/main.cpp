@@ -292,6 +292,65 @@ namespace {
 
     WebServer firmware_server(8081);
 
+    enum class FirmwareUploadState {
+        kIdle,
+        kWriting,
+        kFailed,
+        kInstalled
+    };
+
+    FirmwareUploadState firmware_upload_state = FirmwareUploadState::kIdle;
+
+    const char firmware_upload_page[] PROGMEM = R"html(
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firmware Upload</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 2rem auto; max-width: 36rem; padding: 0 1rem; }
+    form { display: grid; gap: 1rem; }
+    button { justify-self: start; padding: .6rem 1rem; }
+    #status { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Install firmware</h1>
+  <p>Select a <code>.bin</code> built for this device's board and firmware variant. Do not disconnect power during installation.</p>
+  <form id="upload-form">
+    <label for="firmware">Firmware file</label>
+    <input id="firmware" name="firmware" type="file" accept=".bin,application/octet-stream" required>
+    <button id="submit" type="submit">Upload and install</button>
+  </form>
+  <p id="status" role="status" aria-live="polite"></p>
+  <script>
+    const form = document.getElementById('upload-form');
+    const button = document.getElementById('submit');
+    const status = document.getElementById('status');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      status.textContent = 'Uploading firmware... Keep this page open.';
+      try {
+        const response = await fetch('/upload', { method: 'POST', body: new FormData(form) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.status || `HTTP ${response.status}`);
+        status.textContent = 'Upload complete. The device is restarting; reconnect in about a minute.';
+      } catch (error) {
+        status.textContent = `Firmware upload failed: ${error.message}`;
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
+)html";
+
+    void handle_firmware_upload_page() {
+        firmware_server.send_P(200, "text/html", firmware_upload_page);
+    }
+
     void handle_firmware_status() {
         String payload = String("{\"variant\":\"") + String(FIRMWARE_VARIANT) +
                         "\",\"version\":\"" + String(FIRMWARE_VERSION) +
@@ -299,6 +358,85 @@ namespace {
                         "}";
         firmware_server.sendHeader("Access-Control-Allow-Origin", "*");
         firmware_server.send(200, "application/json", payload);
+    }
+
+    void handle_firmware_upload_chunk() {
+        HTTPUpload& upload = firmware_server.upload();
+
+        switch (upload.status) {
+            case UPLOAD_FILE_START:
+                if (firmware_upload_state != FirmwareUploadState::kIdle) {
+                    ESP_LOGE("ARDUINO", "Firmware upload rejected: submit one firmware file per request");
+                    return;
+                }
+                firmware_upload_state = FirmwareUploadState::kFailed;
+                if (WiFi.status() != WL_CONNECTED) {
+                    ESP_LOGE("ARDUINO", "Firmware upload rejected: Wi-Fi is disconnected");
+                    return;
+                }
+                if (upload.name != "firmware" || !upload.filename.endsWith(".bin")) {
+                    ESP_LOGE("ARDUINO", "Firmware upload rejected: expected a .bin file in the 'firmware' field");
+                    return;
+                }
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    ESP_LOGE("ARDUINO", "Unable to start uploaded firmware update: %s", Update.errorString());
+                    return;
+                }
+                firmware_upload_state = FirmwareUploadState::kWriting;
+                ESP_LOGI("ARDUINO", "Receiving firmware file: %s", upload.filename.c_str());
+                break;
+
+            case UPLOAD_FILE_WRITE:
+                if (firmware_upload_state != FirmwareUploadState::kWriting) {
+                    return;
+                }
+                if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                    ESP_LOGE("ARDUINO", "Firmware upload write failed: %s", Update.errorString());
+                    Update.abort();
+                    firmware_upload_state = FirmwareUploadState::kFailed;
+                }
+                break;
+
+            case UPLOAD_FILE_END:
+                if (firmware_upload_state != FirmwareUploadState::kWriting) {
+                    return;
+                }
+                if (Update.end(true)) {
+                    firmware_upload_state = FirmwareUploadState::kInstalled;
+                    ESP_LOGI("ARDUINO", "Uploaded firmware validated and ready to install");
+                } else {
+                    ESP_LOGE("ARDUINO", "Uploaded firmware could not be finalized: %s", Update.errorString());
+                    firmware_upload_state = FirmwareUploadState::kFailed;
+                }
+                break;
+
+            case UPLOAD_FILE_ABORTED:
+                if (Update.isRunning()) {
+                    Update.abort();
+                }
+                firmware_upload_state = FirmwareUploadState::kFailed;
+                ESP_LOGE("ARDUINO", "Firmware upload was aborted");
+                break;
+        }
+    }
+
+    void handle_firmware_upload_complete() {
+        const FirmwareUploadState result = firmware_upload_state;
+        firmware_upload_state = FirmwareUploadState::kIdle;
+
+        if (result == FirmwareUploadState::kInstalled) {
+            firmware_server.send(200, "application/json", "{\"status\":\"update-started\"}");
+            delay(500);
+            ESP.restart();
+            return;
+        }
+
+        if (result == FirmwareUploadState::kIdle) {
+            firmware_server.send(400, "application/json", "{\"status\":\"no-firmware-file\"}");
+            return;
+        }
+
+        firmware_server.send(500, "application/json", "{\"status\":\"upload-failed\"}");
     }
 
     void handle_firmware_update() {
@@ -720,8 +858,11 @@ void setup() {
              FIRMWARE_VERSION,
              FIRMWARE_GIT_SHA);
 
+  firmware_server.on("/", HTTP_GET, handle_firmware_upload_page);
   firmware_server.on("/status", HTTP_GET, handle_firmware_status);
   firmware_server.on("/update", HTTP_POST, handle_firmware_update);
+  firmware_server.on("/upload", HTTP_POST, handle_firmware_upload_complete,
+                     handle_firmware_upload_chunk);
   firmware_server.begin();
   
   // Start SensESP network operations

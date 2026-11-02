@@ -14,7 +14,17 @@ Using a mobile phone or similar that is connected to your boats Wi-Fi you will t
 
 From this portal you can check the status of the ESP32 and make run time configuration changes to Wi-Fi settings and sample rates as well as rebooting the device. At this point you can also change the device hostname sensesp.local to something more meaningful to your set up - e.g. watersensor.local.
 
-To update the firmware, click **Check for firmware update** in the SensESP web UI. The device must have internet access so it can check GitHub and synchronize its clock for HTTPS certificate validation. The update endpoint is `POST http://<device-hostname>:8081/update`; `GET http://<device-hostname>:8081/status` reports the installed variant and version. The updater reports `up-to-date` when the latest firmware is already installed, or a specific error status if the release check, download, or flash fails. If the device is running firmware without the OTA updater, install a build over USB first.
+To update the firmware, click **Check for firmware update** in the SensESP web UI. The device must have internet access so it can check GitHub and synchronize its clock for HTTPS certificate validation. The update endpoint is `POST http://<device-hostname>:8081/update`; `GET http://<device-hostname>:8081/status` reports the installed variant and version. The updater reports `up-to-date` when the latest firmware is already installed, or a specific error status if the release check, download, or flash fails.
+
+If the ESP32 cannot reach GitHub's release-asset host, open `http://<device-hostname>:8081/` on a computer on the same network to upload and install a firmware `.bin` through the browser. Choose a file built for the device's board and variant.
+
+Alternatively, copy the firmware file to a computer such as a Raspberry Pi and run:
+
+```sh
+curl -fS -F 'firmware=@/home/pi/firmware.bin' http://sensesp.local:8081/upload
+```
+
+Replace the file path and device hostname as needed. A successful upload returns `{"status":"update-started"}` and restarts the ESP32. The upload endpoint is unauthenticated, so only use it on a trusted network. The upload page is available once firmware that includes it has been installed; if the device cannot download that first update, install it over USB.
 
 Configure SignalK to accept data from the sensor following SensESP documentation
 
